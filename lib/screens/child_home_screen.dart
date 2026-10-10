@@ -18,8 +18,9 @@ import 'welcome_screen.dart';
 /// - "Atualizar minha localização" usa o GPS de verdade e envia
 ///   a posição ao responsável via Firebase.
 /// - Rastreamento contínuo: um serviço em primeiro plano envia a posição
-///   ao responsável a cada 15 segundos, mesmo com o app em 2º plano
-///   (estilo Uber). Pode ser pausado pelo botão de compartilhamento.
+///   ao responsável a cada 4 segundos, mesmo com o app em 2º plano
+///   (estilo Uber). Não pode ser pausado pelo filho: é uma medida de
+///   segurança definida pelo responsável.
 /// - Nível de bateria é lido do aparelho.
 ///
 /// Sem Firebase/rede, tudo continua funcionando localmente neste aparelho.
@@ -47,8 +48,9 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
   void initState() {
     super.initState();
     _load();
-    // Inicia o rastreamento contínuo (foreground service, a cada 15s)
-    // assim que a tela do filho abre.
+    // Inicia o rastreamento contínuo (foreground service, a cada 4s)
+    // assim que a tela do filho abre. Não há opção de pausar: é uma
+    // medida de segurança definida pelo responsável.
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) _startSharing();
     });
@@ -136,7 +138,9 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
     return ids;
   }
 
-  /// Inicia o serviço de rastreamento contínuo (15s, mesmo em 2º plano).
+  /// Inicia o serviço de rastreamento contínuo (4s, mesmo em 2º plano).
+  /// É chamado automaticamente ao abrir a tela e não há opção de
+  /// pausar pelo filho (medida de segurança do responsável).
   Future<void> _startSharing() async {
     final child = _child;
     if (child == null || !FirebaseService.available) return;
@@ -147,19 +151,12 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
       childId: child.id,
       childName: child.name,
       guardianId: _guardianId(),
+      // Multi-responsável: o serviço nativo grava o array `guardianIds`
+      // no Firestore para que pai e mãe recebam todos os alertas.
+      guardianIds: _guardianIdsCache.isNotEmpty ? _guardianIdsCache : null,
     );
     final running = await SharingService.isRunning();
     if (mounted) setState(() => _sharing = running);
-  }
-
-  /// Pausa/retoma o compartilhamento (transparência para o filho).
-  Future<void> _toggleSharing() async {
-    if (_sharing) {
-      await SharingService.stop();
-      if (mounted) setState(() => _sharing = false);
-    } else {
-      await _startSharing();
-    }
   }
 
   Future<void> _updateLocation() async {
@@ -365,7 +362,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
             tooltip: 'Sair',
             icon: const Icon(Icons.logout),
             onPressed: () async {
-              await SharingService.stop();
+              // O compartilhamento NÃO é interrompido no logout: é uma
+              // medida de segurança e continua rodando em 2º plano.
               await widget.deps.auth.logout();
               if (!context.mounted) return;
               Navigator.of(context).pushAndRemoveUntil(
@@ -412,7 +410,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
                                 child: Text(
                                   _sharing
                                       ? 'Compartilhando sua localização em tempo real'
-                                      : 'Compartilhamento pausado',
+                                      : 'Ativando compartilhamento...',
                                   style: const TextStyle(
                                       fontSize: 14,
                                       color: AppTheme.textMuted),
@@ -421,16 +419,6 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
                             ],
                           ),
                           const SizedBox(height: 8),
-                          OutlinedButton.icon(
-                            onPressed: _toggleSharing,
-                            icon: Icon(_sharing
-                                ? Icons.pause_circle_outline
-                                : Icons.play_circle_outline),
-                            label: Text(_sharing
-                                ? 'Pausar compartilhamento'
-                                : 'Retomar compartilhamento'),
-                          ),
-                          const SizedBox(height: 12),
                           Text(
                             'Última atualização: ${AppTheme.timeAgo(child.lastUpdate)}'
                             '${child.batteryLevel != null ? ' • Bateria ${child.batteryLevel}%' : ''}',
@@ -524,7 +512,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Sua localização só é vista pelo seu responsável. Nada é compartilhado sem a sua permissão.',
+                    'Sua localização é compartilhada com seu responsável como medida de segurança.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                         fontSize: 12, color: AppTheme.textMuted),
