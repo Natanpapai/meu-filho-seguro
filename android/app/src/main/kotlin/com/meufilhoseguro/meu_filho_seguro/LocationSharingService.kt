@@ -159,7 +159,7 @@ class LocationSharingService : Service() {
             val battery = (getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
                 .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
 
-            val data = hashMapOf<String, Any?>(
+            val data: HashMap<String, Any> = hashMapOf(
                 "childId" to childId,
                 "childName" to childName,
                 "guardianId" to guardianId,
