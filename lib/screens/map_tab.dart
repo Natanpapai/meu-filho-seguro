@@ -76,6 +76,19 @@ class _MapTabState extends State<MapTab> with TickerProviderStateMixin {
   final Map<String, AnimationController> _ctrls = {};
   final Map<String, Animation<LatLng>> _anims = {};
 
+  /// Listenable mesclado (cache): recriar o merge a cada snapshot
+  /// fazia o AnimatedBuilder recancelar e reassinar — churn desnecessário.
+  Listenable? _merged;
+  int _mergedSize = -1;
+
+  Listenable _mergedAnimation() {
+    if (_merged == null || _mergedSize != _ctrls.length) {
+      _merged = Listenable.merge(_ctrls.values.toList());
+      _mergedSize = _ctrls.length;
+    }
+    return _merged!;
+  }
+
   @override
   void dispose() {
     for (final c in _ctrls.values) {
@@ -98,16 +111,24 @@ class _MapTabState extends State<MapTab> with TickerProviderStateMixin {
   }
 
   /// Move suavemente o marcador do filho até o novo ponto.
+  ///
+  /// OTIMIZAÇÃO: só reinicia a animação se o alvo mudou mais de 5 metros.
+  /// Sem isso, o jitter do GPS (pequenas variações a cada update de 5s)
+  /// reiniciava a animação de 1,2s sem parar, reconstruindo o mapa
+  /// inteiro a 60fps — principal causa da lentidão percebida.
   void _retarget(String childId, LatLng target) {
     final ctrl = _ctrls.putIfAbsent(
       childId,
       () => AnimationController(
         vsync: this,
-        duration: const Duration(milliseconds: 1200),
+        duration: const Duration(milliseconds: 800),
       ),
     );
     final from = _anims[childId]?.value ?? target;
     if (from == target) return;
+    // Ignora micro-movimentos (jitter do GPS).
+    const dist = Distance();
+    if (dist(from, target) < 5) return;
     _anims[childId] = _LatLngTween(begin: from, end: target).animate(
       CurvedAnimation(parent: ctrl, curve: Curves.easeInOut),
     );
@@ -146,7 +167,7 @@ class _MapTabState extends State<MapTab> with TickerProviderStateMixin {
         }
         // Reconstrói os marcadores a cada frame da animação de deslizamento.
         return AnimatedBuilder(
-          animation: Listenable.merge(_ctrls.values.toList()),
+          animation: _mergedAnimation(),
           builder: (context, _) => _buildMap(children, remote, positioned),
         );
       },
