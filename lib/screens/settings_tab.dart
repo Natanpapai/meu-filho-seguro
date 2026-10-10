@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../theme.dart';
 import 'alarm_sound_screen.dart';
 import 'places_screen.dart';
+import 'profile_screen.dart';
 import 'welcome_screen.dart';
 
 /// Aba Ajustes: perfil, locais, som do alarme e saída.
@@ -54,6 +55,16 @@ class SettingsTab extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _MenuTile(
+          icon: Icons.person_outline,
+          title: 'Meus Dados',
+          subtitle: 'Ver e editar nome e telefone',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+                builder: (_) => ProfileScreen(deps: deps)),
           ),
         ),
         const SizedBox(height: 12),
