@@ -56,6 +56,8 @@
             android:launchMode="singleTop"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
             android:theme="@style/NormalTheme" />
         <!-- Serviço de rastreamento contínuo (estilo Uber): envia a posição
              do filho ao Firestore a cada 15 segundos, mesmo em 2º plano. -->
