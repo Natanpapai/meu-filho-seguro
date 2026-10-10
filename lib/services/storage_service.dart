@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
 import '../models/safety_models.dart';
@@ -23,7 +24,19 @@ class StorageService {
   }
 
   // ---- Sessão / papel ----
-  Future<void> setRole(String role) => _prefs.setString(_kRole, role);
+  /// Notifica mudanças de sessão (login, cadastro, vinculação, logout).
+  /// O monitor global de SOS ([SosMonitor]) escuta este notificador para
+  /// começar a vigiar assim que o responsável entra — mesmo que o login
+  /// aconteça depois do app já estar aberto (nesse caso o `builder` do
+  /// MaterialApp não é reconstruído sozinho).
+  final ValueNotifier<int> authTick = ValueNotifier<int>(0);
+
+  void _bumpAuth() => authTick.value++;
+
+  Future<void> setRole(String role) {
+    _bumpAuth();
+    return _prefs.setString(_kRole, role);
+  }
   String? getRole() => _prefs.getString(_kRole);
   Future<void> setSessionChildId(String id) =>
       _prefs.setString(_kSessionChildId, id);
@@ -38,11 +51,14 @@ class StorageService {
   Future<void> clearSession() async {
     await _prefs.remove(_kRole);
     await _prefs.remove(_kSessionChildId);
+    _bumpAuth();
   }
 
   // ---- Responsável ----
-  Future<void> saveGuardian(Guardian g) =>
-      _prefs.setString(_kGuardian, jsonEncode(g.toJson()));
+  Future<void> saveGuardian(Guardian g) {
+    _bumpAuth();
+    return _prefs.setString(_kGuardian, jsonEncode(g.toJson()));
+  }
   Guardian? getGuardian() {
     final raw = _prefs.getString(_kGuardian);
     if (raw == null) return null;
