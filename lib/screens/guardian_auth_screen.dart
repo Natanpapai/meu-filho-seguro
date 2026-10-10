@@ -70,6 +70,123 @@ class _GuardianAuthScreenState extends State<GuardianAuthScreen>
     }
   }
 
+  /// Diálogo "Esqueci minha senha": pede o e-mail e envia o link de
+  /// redefinição via Firebase Auth.
+  Future<void> _showForgotPassword() async {
+    final emailCtrl = TextEditingController(text: _email.text.trim());
+    final formKey = GlobalKey<FormState>();
+    bool sending = false;
+    bool sent = false;
+    String? error;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !sending,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          Future<void> send() async {
+            if (!formKey.currentState!.validate()) return;
+            setDialogState(() {
+              sending = true;
+              error = null;
+            });
+            final result =
+                await widget.deps.auth.sendPasswordReset(emailCtrl.text);
+            if (!dialogContext.mounted) return;
+            setDialogState(() {
+              sending = false;
+              if (result.$1) {
+                sent = true;
+              } else {
+                error = result.$2;
+              }
+            });
+          }
+
+          return AlertDialog(
+            title: const Text('Recuperar senha'),
+            content: sent
+                ? const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.mark_email_read_outlined,
+                          size: 48, color: Colors.green),
+                      SizedBox(height: 12),
+                      Text(
+                        'E-mail de recuperação enviado!\n\n'
+                        'Verifique sua caixa de entrada (e o spam) e '
+                        'siga o link para criar uma nova senha.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  )
+                : Form(
+                    key: formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Digite o e-mail da sua conta para receber '
+                          'o link de redefinição de senha.',
+                          style: TextStyle(fontSize: 13),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: emailCtrl,
+                          keyboardType: TextInputType.emailAddress,
+                          autofocus: true,
+                          decoration: const InputDecoration(
+                            labelText: 'E-mail',
+                            prefixIcon: Icon(Icons.email_outlined),
+                          ),
+                          validator: (v) => (v == null || !v.contains('@'))
+                              ? 'Informe um e-mail válido'
+                              : null,
+                        ),
+                        if (error != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            error!,
+                            style: const TextStyle(
+                                color: AppTheme.danger, fontSize: 13),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+            actions: sent
+                ? [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Text('Fechar'),
+                    ),
+                  ]
+                : [
+                    TextButton(
+                      onPressed: sending
+                          ? null
+                          : () => Navigator.of(dialogContext).pop(),
+                      child: const Text('Cancelar'),
+                    ),
+                    ElevatedButton(
+                      onPressed: sending ? null : send,
+                      child: sending
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Text('Enviar'),
+                    ),
+                  ],
+          );
+        },
+      ),
+    );
+    emailCtrl.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -184,6 +301,16 @@ class _GuardianAuthScreenState extends State<GuardianAuthScreen>
                     )
                   : Text(isRegister ? 'Criar conta' : 'Entrar'),
             ),
+            if (!isRegister) ...[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _showForgotPassword,
+                  child: const Text('Esqueci minha senha'),
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             const Text(
               'Versão inicial: a conta fica salva neste aparelho. '
