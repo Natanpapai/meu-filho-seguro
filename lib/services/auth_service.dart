@@ -75,6 +75,7 @@ class AuthService {
     await _storage.setRole('guardian');
     // Liga a vigilância SOS em 2º plano (alarme mesmo com tela bloqueada).
     _startSosWatch();
+    ensureGuardianLinked();
 
     // Guarda o perfil do responsável no Firestore para reconstruir
     // o login em outro aparelho se os dados locais forem apagados.
@@ -155,6 +156,7 @@ class AuthService {
         await _storage.setRole('guardian');
         // Liga a vigilância SOS em 2º plano.
         _startSosWatch();
+        ensureGuardianLinked();
         return (true, null);
       } on fb_auth.FirebaseAuthException catch (e) {
         // Conta não existe no Firebase ou senha errada: tenta o modo local.
@@ -174,6 +176,7 @@ class AuthService {
     await _storage.setRole('guardian');
     // Liga a vigilância SOS em 2º plano.
     _startSosWatch();
+    ensureGuardianLinked();
     return (true, null);
   }
 
@@ -419,6 +422,7 @@ class AuthService {
       // Liga a vigilância SOS em 2º plano para este responsável também
       // (alarme mesmo com app fechado/tela bloqueada).
       _startSosWatch();
+      ensureGuardianLinked();
       // 3) Uso único.
       await doc.reference.delete();
       return (true, null);
@@ -451,6 +455,26 @@ class AuthService {
     final g = _storage.getGuardian();
     if (g != null && g.id.isNotEmpty) {
       SosAlarmService.startWatch(g.id);
+    }
+  }
+
+  /// Garante que o ID ATUAL deste responsável esteja na lista de
+  /// vinculados de cada filho conhecido (`child_guardians/{childId}`).
+  ///
+  /// Por que: o ID local do responsável pode mudar (ex.: reinstalou o
+  /// app e o login reconstruiu o perfil com um ID novo), mas o
+  /// Firestore guardava o ID antigo — o SOS do filho ia endereçado ao
+  /// ID antigo e este aparelho nunca recebia o alerta (só o outro
+  /// responsável recebia). O `arrayUnion` é idempotente: chamar sempre
+  /// é seguro e barato.
+  Future<void> ensureGuardianLinked() async {
+    if (!_fb) return;
+    final g = _storage.getGuardian();
+    if (g == null || g.id.isEmpty) return;
+    for (final c in _storage.getChildren()) {
+      try {
+        await RemoteSync.addGuardianToChild(c.id, g.id);
+      } catch (_) {}
     }
   }
 }
