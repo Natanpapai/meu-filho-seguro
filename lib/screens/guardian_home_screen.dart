@@ -4,7 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../app_deps.dart';
 import '../models/models.dart';
+import '../models/safety_models.dart';
 import '../services/firebase_service.dart';
+import '../services/route_service.dart';
 import '../services/sos_alarm_service.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
@@ -13,6 +15,7 @@ import 'map_tab.dart';
 import 'history_tab.dart';
 import 'settings_tab.dart';
 import 'pairing_screen.dart';
+import 'safety_screen.dart';
 import '../widgets/connectivity_chip.dart';
 
 /// Tela principal do responsável: filhos, status, mapa, histórico e ajustes.
@@ -30,6 +33,19 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
   void _refresh() => setState(() {});
 
   @override
+  void initState() {
+    super.initState();
+    // Monitor de desvio de rota (só com Firebase e rotas definidas).
+    RouteMonitor.start(widget.deps);
+  }
+
+  @override
+  void dispose() {
+    RouteMonitor.stop();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final guardian = widget.deps.storage.getGuardian();
     final titles = ['Meus filhos', 'Mapa', 'Histórico', 'Ajustes'];
@@ -38,6 +54,21 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
         title: Text(titles[_tab]),
         actions: [
           const ConnectivityChip(),
+          IconButton(
+            tooltip: 'Central de segurança',
+            icon: const Icon(Icons.shield_outlined),
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SafetyScreen(deps: widget.deps),
+                ),
+              );
+              _refresh();
+              // Rotas podem ter mudado: reinicia o monitor.
+              RouteMonitor.stop();
+              RouteMonitor.start(widget.deps);
+            },
+          ),
           if (_tab == 0)
             IconButton(
               tooltip: 'Vincular celular do filho',
@@ -114,6 +145,8 @@ class _HomeTab extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           _SosBanner(deps: deps),
+          _RouteBanner(deps: deps),
+          _BatteryBanner(deps: deps),
           if (children.isEmpty)
             Card(
               child: Padding(
@@ -197,6 +230,7 @@ class _HomeTab extends StatelessWidget {
 /// Banner de alertas SOS em tempo real (via Firestore).
 /// Aparece no topo da aba "Filhos" segundos após o filho acionar o SOS.
 /// Também dispara o alarme sonoro (fura silencioso/DND) + popup full-screen.
+/// Alertas de pânico silencioso mostram o selo correspondente.
 class _SosBanner extends StatelessWidget {
   final AppDeps deps;
   const _SosBanner({required this.deps});
@@ -206,10 +240,10 @@ class _SosBanner extends StatelessWidget {
     if (!FirebaseService.available) return const SizedBox.shrink();
     final gid = deps.storage.getGuardian()?.id;
     if (gid == null || gid.isEmpty) return const SizedBox.shrink();
-    return StreamBuilder<List<SosAlert>>(
-      stream: RemoteSync.sosAlertsStream(gid),
+    return StreamBuilder<List<SosAlertInfo>>(
+      stream: RemoteSync.sosAlertsInfoStream(gid),
       builder: (context, snap) {
-        final alerts = (snap.data ?? const <SosAlert>[])
+        final alerts = (snap.data ?? const <SosAlertInfo>[])
             .where((a) => !a.ack)
             .where((a) =>
                 a.timestamp == null ||
@@ -220,7 +254,16 @@ class _SosBanner extends StatelessWidget {
         // O SosAlarmService garante que cada alerta toca só uma vez.
         WidgetsBinding.instance.addPostFrameCallback((_) {
           for (final a in alerts) {
-            SosAlarmService.triggerAlarm(a);
+            SosAlarmService.triggerAlarm(SosAlert(
+              id: a.id,
+              childId: a.childId,
+              childName: a.childName,
+              guardianId: gid,
+              lat: a.lat,
+              lng: a.lng,
+              timestamp: a.timestamp,
+              ack: a.ack,
+            ));
           }
         });
         return Column(
@@ -235,7 +278,7 @@ class _SosBanner extends StatelessWidget {
 }
 
 class _SosCard extends StatelessWidget {
-  final SosAlert alert;
+  final SosAlertInfo alert;
   const _SosCard({required this.alert});
 
   @override
@@ -257,14 +300,38 @@ class _SosCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'SOS ACIONADO!',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1,
-                        ),
+                      Row(
+                        children: [
+                          const Text(
+                            'SOS ACIONADO!',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                          if (alert.silent) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.white
+                                    .withValues(alpha: 0.25),
+                                borderRadius:
+                                    BorderRadius.circular(10),
+                              ),
+                              child: const Text(
+                                'silencioso',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                       Text(
                         '${alert.childName} • ${AppTheme.timeAgo(alert.timestamp)}',
@@ -298,6 +365,185 @@ class _SosCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Banner de alerta de desvio de rota (via Firestore).
+class _RouteBanner extends StatelessWidget {
+  final AppDeps deps;
+  const _RouteBanner({required this.deps});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!FirebaseService.available) return const SizedBox.shrink();
+    final gid = deps.storage.getGuardian()?.id;
+    if (gid == null || gid.isEmpty) return const SizedBox.shrink();
+    return StreamBuilder<List<RouteAlert>>(
+      stream: RouteMonitor.routeAlertsStream(gid),
+      builder: (context, snap) {
+        final alerts = snap.data ?? const <RouteAlert>[];
+        if (alerts.isEmpty) return const SizedBox.shrink();
+        return Column(
+          children: [
+            for (final a in alerts)
+              Card(
+                color: const Color(0xFFEF6C00),
+                margin: const EdgeInsets.only(bottom: 8),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.route_outlined,
+                              color: Colors.white, size: 30),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment:
+                                  CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'SAIU DA ROTA',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1,
+                                  ),
+                                ),
+                                Text(
+                                  '${a.childName} • ${AppTheme.timeAgo(a.timestamp)}',
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13),
+                                ),
+                                if (a.distanceMeters != null)
+                                  Text(
+                                    '${(a.distanceMeters! / 1000).toStringAsFixed(1)} km fora do caminho esperado',
+                                    style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor:
+                              const Color(0xFFEF6C00),
+                        ),
+                        onPressed: () =>
+                            RouteMonitor.ackRouteAlert(a.id),
+                        child: const Text('Marcar como visto'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            const SizedBox(height: 8),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Banner de bateria fraca do celular do filho (< 20%).
+/// Alerta 1x ao dia por filho para não virar spam.
+class _BatteryBanner extends StatelessWidget {
+  final AppDeps deps;
+  const _BatteryBanner({required this.deps});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!FirebaseService.available) return const SizedBox.shrink();
+    final children = deps.storage.getChildren();
+    if (children.isEmpty) return const SizedBox.shrink();
+    final ids = children.map((c) => c.id).toList();
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: RemoteSync.locationsStream(ids),
+      builder: (context, snap) {
+        final low = <String, int>{}; // childId -> battery
+        for (final d in snap.data?.docs ?? const []) {
+          final m = d.data();
+          final batt = (m['battery'] as num?)?.toInt();
+          if (batt != null && batt < 20) {
+            // Só mostra 1x ao dia por filho.
+            final today =
+                '${DateTime.now().year}-${DateTime.now().month}-${DateTime.now().day}';
+            final key = 'mfs_batt_alert_${d.id}_$today';
+            if (deps.storage.getRaw(key) == null) {
+              low[d.id] = batt;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                deps.storage.setRaw(key, '1');
+              });
+            }
+          }
+        }
+        if (low.isEmpty) return const SizedBox.shrink();
+        final names = low.keys.map((id) {
+          Child? found;
+          for (final x in children) {
+            if (x.id == id) {
+              found = x;
+              break;
+            }
+          }
+          final name = (found != null && found.nickname.isNotEmpty)
+              ? found.nickname
+              : (found?.name ?? 'Seu filho');
+          return '$name (${low[id]}%)';
+        }).join(', ');
+        return Column(
+          children: [
+            Card(
+              color: const Color(0xFFF9A825),
+              margin: const EdgeInsets.only(bottom: 8),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    const Icon(Icons.battery_alert,
+                        color: Colors.white, size: 30),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'BATERIA FRACA',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                          Text(
+                            '$names — peça para carregar o celular para não perder o rastreamento.',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        );
+      },
     );
   }
 }
@@ -395,10 +641,24 @@ class _LiveAgoState extends State<_LiveAgo> {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      'Atualizado ${_ago()}'
-      '${widget.batteryLevel != null ? ' • Bateria ${widget.batteryLevel}%' : ''}',
-      style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+    final lowBattery =
+        widget.batteryLevel != null && widget.batteryLevel! < 20;
+    return RichText(
+      text: TextSpan(
+        style:
+            const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+        children: [
+          TextSpan(text: 'Atualizado ${_ago()}'),
+          if (widget.batteryLevel != null)
+            TextSpan(
+              text: ' • Bateria ${widget.batteryLevel}%',
+              style: TextStyle(
+                color: lowBattery ? Colors.orange.shade700 : null,
+                fontWeight: lowBattery ? FontWeight.bold : null,
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
