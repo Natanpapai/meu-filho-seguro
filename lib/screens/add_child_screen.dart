@@ -20,6 +20,7 @@ class _AddChildScreenState extends State<AddChildScreen> {
   final _nickname = TextEditingController();
   DateTime? _birthDate;
   String? _photoPath;
+  String _gender = 'boy';
   bool _saving = false;
 
   @override
@@ -68,6 +69,7 @@ class _AddChildScreenState extends State<AddChildScreen> {
           : _nickname.text.trim(),
       birthDate: _birthDate!,
       photoPath: _photoPath,
+      gender: _gender,
     );
     await widget.deps.storage.upsertChild(child);
     setState(() => _saving = false);
@@ -127,6 +129,32 @@ class _AddChildScreenState extends State<AddChildScreen> {
                 decoration: const InputDecoration(
                   labelText: 'Apelido (opcional)',
                   prefixIcon: Icon(Icons.tag),
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Menino ou menina?',
+                style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
+              ),
+              const SizedBox(height: 8),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                    value: 'boy',
+                    label: Text('Menino'),
+                    icon: Icon(Icons.boy),
+                  ),
+                  ButtonSegment(
+                    value: 'girl',
+                    label: Text('Menina'),
+                    icon: Icon(Icons.girl),
+                  ),
+                ],
+                selected: {_gender},
+                onSelectionChanged: (s) =>
+                    setState(() => _gender = s.first),
+                style: SegmentedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
                 ),
               ),
               const SizedBox(height: 14),
