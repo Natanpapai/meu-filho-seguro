@@ -94,6 +94,12 @@ class MainActivity : FlutterActivity() {
                         call.argument<String>("guardianId")?.let {
                             intent.putExtra("guardian_id", it)
                         }
+                        // Multi-responsável: lista de todos os responsáveis
+                        // (pai e mãe) para o doc `locations` incluir o array
+                        // `guardianIds` — usado pelo alerta de offline.
+                        call.argument<List<String>>("guardianIds")?.let {
+                            intent.putExtra("guardian_ids", it.toTypedArray())
+                        }
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                             startForegroundService(intent)
                         } else {
