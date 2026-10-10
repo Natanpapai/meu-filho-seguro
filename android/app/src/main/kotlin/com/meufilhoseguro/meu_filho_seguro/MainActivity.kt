@@ -213,27 +213,64 @@ class MainActivity : FlutterActivity() {
     /**
      * Lista os sons de alarme disponíveis no sistema.
      * Retorna lista de mapas {title, uri}.
+     *
+     * CORREÇÃO: a versão anterior podia retornar lista vazia (cursor nulo
+     * em alguns aparelhos → NPE capturada → só o fallback), e o usuário
+     * ficava sem opções para escolher. Agora:
+     * - cursor com null-safety e fechamento automático (use)
+     * - varre ALARM, NOTIFICATION e RINGTONE
+     * - sempre inclui os padrões do sistema (sem duplicar URIs)
      */
     private fun getAlarmSounds(): List<Map<String, String>> {
         val out = mutableListOf<Map<String, String>>()
+        val seen = mutableSetOf<String>()
+        fun add(title: String, uri: String) {
+            if (uri.isNotEmpty() && seen.add(uri)) {
+                out.add(mapOf("title" to title, "uri" to uri))
+            }
+        }
         try {
             val rm = RingtoneManager(this)
-            rm.setType(RingtoneManager.TYPE_ALARM)
-            val cursor = rm.cursor
-            while (cursor.moveToNext()) {
-                val title =
-                    cursor.getString(RingtoneManager.TITLE_COLUMN_INDEX)
-                val uri = rm.getRingtoneUri(cursor.position).toString()
-                out.add(mapOf("title" to title, "uri" to uri))
+            for (type in intArrayOf(
+                RingtoneManager.TYPE_ALARM,
+                RingtoneManager.TYPE_NOTIFICATION,
+                RingtoneManager.TYPE_RINGTONE
+            )) {
+                try {
+                    rm.setType(type)
+                    rm.cursor?.use { cursor ->
+                        while (cursor.moveToNext()) {
+                            val title = cursor.getString(
+                                RingtoneManager.TITLE_COLUMN_INDEX
+                            ) ?: "Som"
+                            val uri = rm.getRingtoneUri(cursor.position)
+                                ?.toString() ?: ""
+                            add(title, uri)
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Tenta o próximo tipo.
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        if (out.isEmpty()) {
-            val def = RingtoneManager
-                .getDefaultUri(RingtoneManager.TYPE_ALARM)?.toString() ?: ""
-            out.add(mapOf("title" to "Alarme padrão do sistema", "uri" to def))
-        }
+        // Sempre oferece os padrões do sistema.
+        add(
+            "Alarme padrão",
+            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?.toString() ?: ""
+        )
+        add(
+            "Notificação padrão",
+            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                ?.toString() ?: ""
+        )
+        add(
+            "Toque padrão",
+            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                ?.toString() ?: ""
+        )
         return out
     }
 
