@@ -185,18 +185,29 @@ class SosWatchService : Service() {
         } catch (e: Exception) { }
     }
 
+    /**
+     * Notificação de emergência estilo Defesa Civil:
+     * - Abre a [EmergencyAlertActivity] em TELA CHEIA por cima da tela
+     *   bloqueada (fullScreenIntent + showWhenLocked/turnScreenOn)
+     * - Vibração forte em padrão de emergência + LED vermelho
+     * - Ongoing: não pode ser arrastada para fora; só "MARCAR COMO VISTO"
+     *   na tela de emergência dispensa o alerta.
+     */
     private fun showAlertNotification(id: String, childName: String) {
-        val openIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
+        val emergencyIntent =
+            Intent(this, EmergencyAlertActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(EmergencyAlertActivity.EXTRA_ALERT_ID, id)
+                putExtra(EmergencyAlertActivity.EXTRA_CHILD_NAME, childName)
+            }
         val pending = PendingIntent.getActivity(
-            this, id.hashCode(), openIntent,
+            this, id.hashCode(), emergencyIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        // Full-screen intent: abre o app por cima da tela bloqueada.
+        // Full-screen intent: abre a tela de emergência por cima do bloqueio.
         val fullScreen = PendingIntent.getActivity(
-            this, id.hashCode() + 1, openIntent,
+            this, id.hashCode() + 1, emergencyIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
@@ -208,6 +219,10 @@ class SosWatchService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setContentIntent(pending)
             .setFullScreenIntent(fullScreen, true)
+            .setVibrate(longArrayOf(0, 800, 400, 800, 400, 800))
+            .setLights(
+                android.graphics.Color.RED, 1000, 500
+            )
             .setAutoCancel(false)
             .setOngoing(true)
             .build()
@@ -227,6 +242,10 @@ class SosWatchService : Service() {
                 NotificationManager.IMPORTANCE_LOW
             )
         )
+        // Deleta e recria o canal de alerta para garantir que as novas
+        // configurações (vibração Defesa Civil) valham para quem já tinha
+        // o app instalado — canal existente não atualiza sozinho.
+        nm.deleteNotificationChannel(ALERT_CHANNEL_ID)
         val alertChannel = NotificationChannel(
             ALERT_CHANNEL_ID,
             "Alerta SOS",
@@ -235,6 +254,11 @@ class SosWatchService : Service() {
             description = "Alerta de emergência quando o filho aciona o SOS"
             lockscreenVisibility =
                 android.app.Notification.VISIBILITY_PUBLIC
+            // Estilo Defesa Civil: vibração forte no padrão de emergência.
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 800, 400, 800, 400, 800)
+            enableLights(true)
+            lightColor = android.graphics.Color.RED
         }
         nm.createNotificationChannel(alertChannel)
     }
