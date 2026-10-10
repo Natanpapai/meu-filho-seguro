@@ -208,6 +208,16 @@ class EmergencyAlertActivity : Activity() {
         // Ignorado de propósito.
     }
 
+    /**
+     * Se um NOVO alerta chegar com esta tela já aberta (launchMode
+     * singleTop + fallback de abertura direta), troca o intent para o
+     * mais recente — o "MARCAR COMO VISTO" referencia o alerta certo.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
+
     override fun onDestroy() {
         stopVibration()
         super.onDestroy()
