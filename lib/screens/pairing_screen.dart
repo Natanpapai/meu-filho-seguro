@@ -5,6 +5,7 @@ import '../app_deps.dart';
 import '../models/models.dart';
 import '../theme.dart';
 import 'child_home_screen.dart';
+import 'guardian_home_screen.dart';
 
 /// Vinculação segura entre os celulares.
 ///
@@ -32,6 +33,9 @@ class _PairingScreenState extends State<PairingScreen> {
   final _codeController = TextEditingController();
   bool _busy = false;
   String? _error;
+  // true = este aparelho é de um 2º responsável (pai/mãe) que vai
+  // acompanhar o MESMO filho usando o mesmo código de vinculação.
+  bool _asSecondGuardian = false;
 
   @override
   void dispose() {
@@ -89,6 +93,23 @@ class _PairingScreenState extends State<PairingScreen> {
       _busy = true;
       _error = null;
     });
+    if (_asSecondGuardian) {
+      // 2º responsável (pai/mãe): vincula ao MESMO filho com o mesmo
+      // código. Ambos recebem SOS e veem a localização.
+      final result = await widget.deps.auth.pairGuardianWithCode(code);
+      setState(() => _busy = false);
+      if (result.$1) {
+        if (!mounted) return;
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+              builder: (_) => GuardianHomeScreen(deps: widget.deps)),
+          (_) => false,
+        );
+      } else {
+        setState(() => _error = result.$2);
+      }
+      return;
+    }
     final result = await widget.deps.auth.pairWithCode(code);
     setState(() => _busy = false);
     if (result.$1) {
@@ -240,12 +261,31 @@ class _PairingScreenState extends State<PairingScreen> {
               fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textDark),
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Peça para o responsável gerar um código de 6 dígitos no celular dele e digite aqui.',
+        Text(
+          _asSecondGuardian
+              ? 'Peça para o outro responsável gerar um código de 6 dígitos no celular dele e digite aqui. Você vai acompanhar o mesmo filho.'
+              : 'Peça para o responsável gerar um código de 6 dígitos no celular dele e digite aqui.',
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 14, color: AppTheme.textMuted),
+          style: const TextStyle(fontSize: 14, color: AppTheme.textMuted),
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 16),
+        // Escolha: celular do filho ou 2º responsável (pai/mãe).
+        SegmentedButton<bool>(
+          segments: const [
+            ButtonSegment(
+                value: false,
+                icon: Icon(Icons.child_care),
+                label: Text('Filho')),
+            ButtonSegment(
+                value: true,
+                icon: Icon(Icons.family_restroom),
+                label: Text('2º responsável')),
+          ],
+          selected: {_asSecondGuardian},
+          onSelectionChanged: (s) =>
+              setState(() => _asSecondGuardian = s.first),
+        ),
+        const SizedBox(height: 16),
         TextField(
           controller: _codeController,
           keyboardType: TextInputType.number,
