@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../app_deps.dart';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
+import '../services/sharing_service.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
 import 'welcome_screen.dart';
@@ -15,8 +16,9 @@ import 'welcome_screen.dart';
 ///   (quando disponível) com data, hora e posição GPS.
 /// - "Atualizar minha localização" usa o GPS de verdade e envia
 ///   a posição ao responsável via Firebase.
-/// - A localização é enviada automaticamente a cada 3 minutos
-///   enquanto o app está aberto.
+/// - Rastreamento contínuo: um serviço em primeiro plano envia a posição
+///   ao responsável a cada 15 segundos, mesmo com o app em 2º plano
+///   (estilo Uber). Pode ser pausado pelo botão de compartilhamento.
 /// - Nível de bateria é lido do aparelho.
 ///
 /// Sem Firebase/rede, tudo continua funcionando localmente neste aparelho.
@@ -32,25 +34,21 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
   Child? _child;
   bool _updating = false;
   String? _message;
-  Timer? _syncTimer;
+  bool _sharing = false;
 
   @override
   void initState() {
     super.initState();
     _load();
-    // Envio periódico da localização ao responsável (a cada 3 minutos)
-    // enquanto o app do filho está aberto.
-    _syncTimer =
-        Timer.periodic(const Duration(minutes: 3), (_) => _pushLocation());
-    // Tenta um envio inicial logo ao abrir.
-    Future.delayed(const Duration(seconds: 5), () {
-      if (mounted) _pushLocation();
+    // Inicia o rastreamento contínuo (foreground service, a cada 15s)
+    // assim que a tela do filho abre.
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) _startSharing();
     });
   }
 
   @override
   void dispose() {
-    _syncTimer?.cancel();
     super.dispose();
   }
 
@@ -69,38 +67,28 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
       widget.deps.storage.getGuardianId() ??
       '';
 
-  /// Envia a localização atual do filho ao responsável via Firestore.
-  /// Silencioso: não mostra nada na tela; falha sem rede não quebra nada.
-  Future<void> _pushLocation() async {
+  /// Inicia o serviço de rastreamento contínuo (15s, mesmo em 2º plano).
+  Future<void> _startSharing() async {
     final child = _child;
     if (child == null || !FirebaseService.available) return;
-    try {
-      final pos = await widget.deps.location.getCurrentPosition();
-      if (pos == null) return;
-      int? battery;
-      try {
-        battery = await Battery().batteryLevel;
-      } catch (_) {}
-      await RemoteSync.sendLocation(
-        childId: child.id,
-        childName: child.name,
-        guardianId: _guardianId(),
-        lat: pos.latitude,
-        lng: pos.longitude,
-        battery: battery,
-      );
-      // Mantém o registro local coerente com o que foi enviado.
-      final updated = child.copyWith(
-        lastLat: pos.latitude,
-        lastLng: pos.longitude,
-        lastUpdate: DateTime.now(),
-        batteryLevel: battery,
-      );
-      await widget.deps.storage.upsertChild(updated);
-      _child = updated;
-      if (mounted) setState(() {});
-    } catch (_) {
-      // Envio periódico nunca deve quebrar o app.
+    // Só compartilha se o filho estiver vinculado a um responsável.
+    if (_guardianId().isEmpty) return;
+    await SharingService.start(
+      childId: child.id,
+      childName: child.name,
+      guardianId: _guardianId(),
+    );
+    final running = await SharingService.isRunning();
+    if (mounted) setState(() => _sharing = running);
+  }
+
+  /// Pausa/retoma o compartilhamento (transparência para o filho).
+  Future<void> _toggleSharing() async {
+    if (_sharing) {
+      await SharingService.stop();
+      if (mounted) setState(() => _sharing = false);
+    } else {
+      await _startSharing();
     }
   }
 
@@ -154,6 +142,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
       lat: pos.latitude,
       lng: pos.longitude,
       battery: battery,
+      speed: pos.speed,
+      heading: pos.heading,
     );
     _child = updated;
     setState(() {
@@ -244,6 +234,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
             tooltip: 'Sair',
             icon: const Icon(Icons.logout),
             onPressed: () async {
+              await SharingService.stop();
               await widget.deps.auth.logout();
               if (!context.mounted) return;
               Navigator.of(context).pushAndRemoveUntil(
@@ -280,19 +271,33 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
                               Container(
                                 width: 10,
                                 height: 10,
-                                decoration: const BoxDecoration(
-                                  color: Colors.green,
+                                decoration: BoxDecoration(
+                                  color: _sharing ? Colors.green : Colors.grey,
                                   shape: BoxShape.circle,
                                 ),
                               ),
                               const SizedBox(width: 8),
-                              const Text(
-                                'Você está compartilhando sua localização',
-                                style: TextStyle(
-                                    fontSize: 14,
-                                    color: AppTheme.textMuted),
+                              Flexible(
+                                child: Text(
+                                  _sharing
+                                      ? 'Compartilhando sua localização em tempo real'
+                                      : 'Compartilhamento pausado',
+                                  style: const TextStyle(
+                                      fontSize: 14,
+                                      color: AppTheme.textMuted),
+                                ),
                               ),
                             ],
+                          ),
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                            onPressed: _toggleSharing,
+                            icon: Icon(_sharing
+                                ? Icons.pause_circle_outline
+                                : Icons.play_circle_outline),
+                            label: Text(_sharing
+                                ? 'Pausar compartilhamento'
+                                : 'Retomar compartilhamento'),
                           ),
                           const SizedBox(height: 12),
                           Text(
