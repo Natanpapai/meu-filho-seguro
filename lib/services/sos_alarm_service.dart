@@ -122,4 +122,25 @@ class SosAlarmService {
   static void reset() {
     _alarmedIds.clear();
   }
+
+  /// Verifica se o sistema permite notificações em tela cheia
+  /// (necessário para a tela de emergência estilo Defesa Civil abrir
+  /// por cima da tela bloqueada). No Android 14+ o usuário precisa
+  /// liberar nas configurações — sem isso, o alerta não aparece.
+  static Future<bool> canUseFullScreenIntent() async {
+    try {
+      final ok =
+          await _channel.invokeMethod<bool>('canUseFullScreenIntent');
+      return ok ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// Abre as configurações do sistema para liberar o alerta em tela cheia.
+  static Future<void> openFullScreenIntentSettings() async {
+    try {
+      await _channel.invokeMethod('openFullScreenIntentSettings');
+    } catch (_) {}
+  }
 }
