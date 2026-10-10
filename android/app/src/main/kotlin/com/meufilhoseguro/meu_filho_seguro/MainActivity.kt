@@ -74,6 +74,45 @@ class MainActivity : FlutterActivity() {
                     "isWatchAlarming" -> {
                         result.success(SosWatchService.isAlarming)
                     }
+                    // Android 14+: a permissão de notificações em tela
+                    // cheia (USE_FULL_SCREEN_INTENT) precisa ser liberada
+                    // pelo usuário nas configurações do sistema — sem
+                    // isso, a tela de emergência estilo Defesa Civil não
+                    // abre por cima da tela bloqueada.
+                    "canUseFullScreenIntent" -> {
+                        val granted = if (Build.VERSION.SDK_INT >= 34) {
+                            val nm = getSystemService(Context.NOTIFICATION_SERVICE)
+                                as android.app.NotificationManager
+                            nm.canUseFullScreenIntent()
+                        } else {
+                            true
+                        }
+                        result.success(granted)
+                    }
+                    "openFullScreenIntentSettings" -> {
+                        try {
+                            val intent = if (Build.VERSION.SDK_INT >= 34) {
+                                Intent(
+                                    android.provider.Settings
+                                        .ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                                    android.net.Uri.parse("package:$packageName")
+                                )
+                            } else {
+                                Intent(
+                                    android.provider.Settings
+                                        .ACTION_APP_NOTIFICATION_SETTINGS
+                                ).putExtra(
+                                    android.provider.Settings.EXTRA_APP_PACKAGE,
+                                    packageName
+                                )
+                            }
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
