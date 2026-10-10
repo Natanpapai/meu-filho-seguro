@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../app_deps.dart';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
+import '../services/history_service.dart';
 import '../services/sharing_service.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
@@ -36,6 +37,12 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
   String? _message;
   bool _sharing = false;
 
+  /// IDs de todos os responsáveis vinculados (multi-responsável).
+  List<String> _guardianIdsCache = [];
+
+  /// Amostrador do histórico do dia (a cada 2 minutos).
+  Timer? _historyTimer;
+
   @override
   void initState() {
     super.initState();
@@ -45,11 +52,49 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) _startSharing();
     });
+    // Amostragem do histórico do dia + atualização da lista de
+    // responsáveis (a cada 2 minutos, só com compartilhamento ativo).
+    _historyTimer =
+        Timer.periodic(const Duration(minutes: 2), (_) async {
+      if (!mounted || !_sharing) return;
+      await _refreshGuardianIds();
+      await _recordHistoryPoint();
+    });
+    // Limpeza de pontos antigos 1x ao dia.
+    Future.delayed(const Duration(seconds: 10), () {
+      if (mounted) _cleanupHistory();
+    });
   }
 
   @override
   void dispose() {
+    _historyTimer?.cancel();
     super.dispose();
+  }
+
+  /// Grava um ponto do trajeto do dia no Firestore.
+  Future<void> _recordHistoryPoint() async {
+    final child = _child;
+    if (child == null || !FirebaseService.available) return;
+    final loc = await HistoryService.readOwnLocation(child.id);
+    if (loc == null) return;
+    await HistoryService.recordPoint(
+      childId: child.id,
+      lat: loc.lat,
+      lng: loc.lng,
+      battery: loc.battery,
+    );
+  }
+
+  Future<void> _cleanupHistory() async {
+    final child = _child;
+    if (child == null) return;
+    final today =
+        '${DateTime.now().year}-${DateTime.now().month}-${DateTime.now().day}';
+    final key = 'mfs_history_clean_$today';
+    if (widget.deps.storage.getRaw(key) != null) return;
+    await HistoryService.cleanupOldPoints(child.id);
+    await widget.deps.storage.setRaw(key, '1');
   }
 
   void _load() {
@@ -67,12 +112,37 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
       widget.deps.storage.getGuardianId() ??
       '';
 
+  /// Lista de TODOS os responsáveis vinculados (multi-responsável).
+  /// Usa o cache local e atualiza do Firestore quando possível.
+  Future<List<String>> _guardianIds() async {
+    if (_guardianIdsCache.isNotEmpty) return _guardianIdsCache;
+    return _refreshGuardianIds();
+  }
+
+  Future<List<String>> _refreshGuardianIds() async {
+    var ids = widget.deps.storage.getGuardianIds();
+    if (ids.isEmpty) {
+      final single = _guardianId();
+      if (single.isNotEmpty) ids = [single];
+    }
+    if (FirebaseService.available && _child != null) {
+      final fresh = await RemoteSync.fetchGuardianIds(_child!.id);
+      if (fresh.isNotEmpty) {
+        ids = fresh;
+        await widget.deps.storage.setGuardianIds(ids);
+      }
+    }
+    _guardianIdsCache = ids;
+    return ids;
+  }
+
   /// Inicia o serviço de rastreamento contínuo (15s, mesmo em 2º plano).
   Future<void> _startSharing() async {
     final child = _child;
     if (child == null || !FirebaseService.available) return;
     // Só compartilha se o filho estiver vinculado a um responsável.
     if (_guardianId().isEmpty) return;
+    await _refreshGuardianIds();
     await SharingService.start(
       childId: child.id,
       childName: child.name,
@@ -112,12 +182,17 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
       return;
     }
     final places = widget.deps.storage.getPlaces();
+    // Modo escola: suprime alertas de rotina (chegou/saiu), mas o
+    // status continua atualizando e o SOS segue funcionando.
+    final schoolActive =
+        widget.deps.storage.getSchoolMode().isActiveNow();
     final newStatus = await Geofence.checkTransitions(
       child: _child!,
       lat: pos.latitude,
       lng: pos.longitude,
       places: places,
       storage: widget.deps.storage,
+      suppressRoutineEvents: schoolActive,
     );
     final updated = _child!.copyWith(
       lastLat: pos.latitude,
@@ -135,6 +210,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
       lng: pos.longitude,
     ));
     // Envia também ao responsável via Firestore (tempo real).
+    // Multi-responsável: envia para pai e mãe.
+    final gids = await _guardianIds();
     await RemoteSync.sendLocation(
       childId: _child!.id,
       childName: _child!.name,
@@ -144,6 +221,7 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
       battery: battery,
       speed: pos.speed,
       heading: pos.heading,
+      guardianIds: gids,
     );
     _child = updated;
     setState(() {
@@ -187,12 +265,15 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
       lng: pos?.longitude,
     ));
     // Envia o SOS ao responsável via Firestore — ele vê em segundos.
+    // Multi-responsável: envia para pai e mãe.
+    final gids = await _guardianIds();
     await RemoteSync.sendSosAlert(
       childId: _child!.id,
       childName: _child!.name,
       guardianId: _guardianId(),
       lat: pos?.latitude,
       lng: pos?.longitude,
+      guardianIds: gids,
     );
     if (!mounted) return;
     final notified = FirebaseService.available;
@@ -219,6 +300,56 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
             child: const Text('OK'),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Pânico silencioso: envia o alerta SEM confirmação, SEM som e SEM
+  /// vibração neste celular — para situações em que o filho não pode
+  /// chamar atenção. O responsável recebe normalmente (com alarme).
+  /// A mensagem de confirmação é neutra, como disfarce.
+  Future<void> _silentSos() async {
+    if (_child == null) return;
+    final pos = await widget.deps.location.getCurrentPosition();
+    int battery = 0;
+    try {
+      battery = await Battery().batteryLevel;
+    } catch (_) {}
+    await widget.deps.storage.addEvent(LocationEvent.create(
+      childId: _child!.id,
+      childName: _child!.name,
+      type: 'sos',
+      lat: pos?.latitude,
+      lng: pos?.longitude,
+    ));
+    final gids = await _guardianIds();
+    await RemoteSync.sendSosAlert(
+      childId: _child!.id,
+      childName: _child!.name,
+      guardianId: _guardianId(),
+      lat: pos?.latitude,
+      lng: pos?.longitude,
+      guardianIds: gids,
+      silent: true,
+    );
+    // Atualiza a posição junto, sem chamar atenção.
+    if (pos != null) {
+      await RemoteSync.sendLocation(
+        childId: _child!.id,
+        childName: _child!.name,
+        guardianId: _guardianId(),
+        lat: pos.latitude,
+        lng: pos.longitude,
+        battery: battery,
+        guardianIds: gids,
+      );
+    }
+    if (!mounted) return;
+    // Confirmação neutra (disfarce).
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Tudo certo por aqui. 👍'),
+        duration: Duration(seconds: 2),
       ),
     );
   }
@@ -376,6 +507,22 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 24),
+                  // Botão de pânico silencioso: discreto, sem confirmação,
+                  // sem som nem vibração neste aparelho. O responsável
+                  // recebe o alerta normalmente (com alarme).
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: _silentSos,
+                      icon: const Icon(Icons.volume_off_outlined,
+                          size: 16, color: AppTheme.textMuted),
+                      label: const Text(
+                        'Pedir ajuda sem chamar atenção',
+                        style: TextStyle(
+                            fontSize: 12, color: AppTheme.textMuted),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   const Text(
                     'Sua localização só é vista pelo seu responsável. Nada é compartilhado sem a sua permissão.',
                     textAlign: TextAlign.center,
