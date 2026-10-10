@@ -81,7 +81,9 @@ class HistoryService {
           .where('timestamp',
               isGreaterThanOrEqualTo: Timestamp.fromDate(start))
           .where('timestamp', isLessThan: Timestamp.fromDate(end))
-          .limit(500)
+          // Teto alto: um dia inteiro de amostragem a cada 2 min dá
+          // ~720 pontos; 1500 garante que nada do dia seja cortado.
+          .limit(1500)
           .get();
       final points = snap.docs
           .map((d) =>
