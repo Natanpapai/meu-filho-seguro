@@ -603,8 +603,11 @@ class _LiveChildCard extends StatelessWidget {
   }
 }
 
-/// Texto "há X" que atualiza sozinho a cada segundo — mostra segundos
-/// quando a atualização é recente (tempo real).
+/// Texto "há X" que atualiza sozinho — mostra segundos quando a
+/// atualização é recente (tempo real).
+///
+/// OTIMIZAÇÃO: atualiza a cada 5 segundos em vez de 1 (5x menos rebuilds).
+/// A diferença visual é mínima ("há 10 s" em vez de "há 12 s").
 class _LiveAgo extends StatefulWidget {
   final DateTime? updatedAt;
   final int? batteryLevel;
@@ -620,7 +623,7 @@ class _LiveAgoState extends State<_LiveAgo> {
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted) setState(() {});
     });
   }
