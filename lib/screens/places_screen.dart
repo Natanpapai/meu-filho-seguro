@@ -73,10 +73,10 @@ class _PlacesScreenState extends State<PlacesScreen> {
                   style: const TextStyle(
                       fontSize: 20, fontWeight: FontWeight.bold)),
               Slider(
-                value: radius.clamp(50, 50000),
+                value: radius.clamp(50, 500000),
                 min: 50,
-                max: 50000,
-                divisions: 50,
+                max: 500000,
+                divisions: 100,
                 label: formatRadius(radius),
                 onChanged: (v) {
                   setState(() {
