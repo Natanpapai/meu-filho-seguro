@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
+import '../models/safety_models.dart';
 
 /// Armazenamento local (no próprio celular).
 /// REAL: funciona de verdade neste aparelho.
@@ -102,4 +103,45 @@ class StorageService {
 
   List<LocationEvent> getEventsForChild(String childId) =>
       getEvents().where((e) => e.childId == childId).toList();
+
+  // ---- Acesso genérico (chaves cruas) ----
+  // Usado por funcionalidades novas (rota, modo escola, etc.) sem
+  // precisar de método dedicado para cada chave.
+  String? getRaw(String key) => _prefs.getString(key);
+  Future<void> setRaw(String key, String value) =>
+      _prefs.setString(key, value);
+  Future<void> removeRaw(String key) => _prefs.remove(key);
+
+  // ---- IDs dos responsáveis (multi-responsável) ----
+  // No celular do filho: lista de todos os responsáveis vinculados,
+  // usada para endereçar SOS e localização a pai e mãe.
+  static const _kGuardianIds = 'mfs_guardian_ids';
+  List<String> getGuardianIds() {
+    final raw = _prefs.getString(_kGuardianIds);
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      return (jsonDecode(raw) as List).map((e) => e.toString()).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> setGuardianIds(List<String> ids) =>
+      _prefs.setString(_kGuardianIds, jsonEncode(ids));
+
+  // ---- Modo Escola ----
+  static const _kSchoolMode = 'mfs_school_mode';
+  SchoolModeSettings getSchoolMode() {
+    final raw = _prefs.getString(_kSchoolMode);
+    if (raw == null || raw.isEmpty) return const SchoolModeSettings();
+    try {
+      return SchoolModeSettings.fromJson(
+          jsonDecode(raw) as Map<String, dynamic>);
+    } catch (_) {
+      return const SchoolModeSettings();
+    }
+  }
+
+  Future<void> setSchoolMode(SchoolModeSettings s) =>
+      _prefs.setString(_kSchoolMode, jsonEncode(s.toJson()));
 }
