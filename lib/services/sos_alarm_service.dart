@@ -92,6 +92,18 @@ class SosAlarmService {
     }
   }
 
+  /// Toca o som SALVO pelo caminho real do alarme (playAlarm sem
+  /// argumentos = usa o que está nas preferências). Serve para o
+  /// usuário testar se a troca funcionou de ponta a ponta.
+  /// Toca por [seconds] e para sozinho.
+  static Future<void> testSavedSound({int seconds = 3}) async {
+    try {
+      await _channel.invokeMethod('playAlarm');
+      await Future.delayed(Duration(seconds: seconds));
+      await _channel.invokeMethod('stopAlarm');
+    } catch (_) {}
+  }
+
   /// Inicia a vigilância SOS em 2º plano (toca mesmo com tela bloqueada).
   static Future<void> startWatch(String guardianId) async {
     try {
