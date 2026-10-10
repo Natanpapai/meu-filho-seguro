@@ -177,6 +177,44 @@ class AuthService {
     return (true, null);
   }
 
+  /// Envia o e-mail de redefinição de senha do Firebase Auth.
+  ///
+  /// Retorna (true, null) em caso de sucesso ou (false, mensagem) com
+  /// erro amigável em português. O Firebase cuida do resto: o usuário
+  /// recebe o e-mail e redefine a senha pelo link.
+  Future<(bool, String?)> sendPasswordReset(String email) async {
+    final clean = email.trim();
+    if (clean.isEmpty || !clean.contains('@')) {
+      return (false, 'Informe um e-mail válido.');
+    }
+    if (!_fb) {
+      return (false, 'Sem conexão com a internet. Tente de novo.');
+    }
+    try {
+      await fb_auth.FirebaseAuth.instance.sendPasswordResetEmail(
+        email: clean,
+      );
+      return (true, null);
+    } on fb_auth.FirebaseAuthException catch (e) {
+      switch (e.code) {
+        case 'invalid-email':
+          return (false, 'Informe um e-mail válido.');
+        case 'user-not-found':
+          return (false, 'Não encontramos uma conta com este e-mail.');
+        case 'network-request-failed':
+          return (false, 'Sem conexão com a internet. Tente de novo.');
+        case 'too-many-requests':
+          return (false, 'Muitas tentativas. Aguarde um pouco e tente de novo.');
+        default:
+          debugPrint('[Auth] sendPasswordReset: ${e.code}');
+          return (false, 'Não foi possível enviar o e-mail. Tente de novo.');
+      }
+    } catch (e) {
+      debugPrint('[Auth] sendPasswordReset falhou: $e');
+      return (false, 'Não foi possível enviar o e-mail. Tente de novo.');
+    }
+  }
+
   /// Busca o perfil do responsável no Firestore (para reconstruir o
   /// login local quando o Firebase Auth autentica mas o aparelho não
   /// tem os dados salvos).
