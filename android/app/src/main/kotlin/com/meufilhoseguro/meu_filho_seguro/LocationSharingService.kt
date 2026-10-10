@@ -23,7 +23,7 @@ import com.google.firebase.firestore.SetOptions
 
 /**
  * Serviço em primeiro plano que envia a localização do filho ao
- * Firestore a cada 15 segundos — é o que permite ao responsável ver
+ * Firestore a cada 5 segundos — é o que permite ao responsável ver
  * o filho se movendo no mapa em tempo real, estilo Uber.
  *
  * - Notificação persistente (Android exige para foreground service).
@@ -39,7 +39,7 @@ class LocationSharingService : Service() {
 
         private const val CHANNEL_ID = "location_sharing_channel"
         private const val NOTIF_ID = 1001
-        private const val INTERVAL_MS = 15_000L
+        private const val INTERVAL_MS = 5_000L
 
         private const val PREFS = "mfs_sharing"
         private const val KEY_CHILD_ID = "child_id"
