@@ -1,7 +1,10 @@
 import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../app_deps.dart';
 import '../models/models.dart';
+import '../services/firebase_service.dart';
+import '../services/sync_service.dart';
 import '../theme.dart';
 import 'add_child_screen.dart';
 import 'map_tab.dart';
@@ -106,6 +109,7 @@ class _HomeTab extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          _SosBanner(deps: deps),
           if (children.isEmpty)
             Card(
               child: Padding(
@@ -133,7 +137,8 @@ class _HomeTab extends StatelessWidget {
               ),
             )
           else
-            ...children.map((c) => _ChildCard(
+            ...children.map((c) => _LiveChildCard(
+                  deps: deps,
                   child: c,
                   onTap: () {},
                   onDelete: () async {
@@ -181,6 +186,152 @@ class _HomeTab extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Banner de alertas SOS em tempo real (via Firestore).
+/// Aparece no topo da aba "Filhos" segundos após o filho acionar o SOS.
+class _SosBanner extends StatelessWidget {
+  final AppDeps deps;
+  const _SosBanner({required this.deps});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!FirebaseService.available) return const SizedBox.shrink();
+    final gid = deps.storage.getGuardian()?.id;
+    if (gid == null || gid.isEmpty) return const SizedBox.shrink();
+    return StreamBuilder<List<SosAlert>>(
+      stream: RemoteSync.sosAlertsStream(gid),
+      builder: (context, snap) {
+        final alerts = (snap.data ?? const <SosAlert>[])
+            .where((a) => !a.ack)
+            .where((a) =>
+                a.timestamp == null ||
+                DateTime.now().difference(a.timestamp!).inHours < 24)
+            .toList();
+        if (alerts.isEmpty) return const SizedBox.shrink();
+        return Column(
+          children: [
+            for (final a in alerts) _SosCard(alert: a),
+            const SizedBox(height: 8),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _SosCard extends StatelessWidget {
+  final SosAlert alert;
+  const _SosCard({required this.alert});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: const Color(0xFFD32F2F),
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded,
+                    color: Colors.white, size: 32),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'SOS ACIONADO!',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      Text(
+                        '${alert.childName} • ${AppTheme.timeAgo(alert.timestamp)}',
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFFD32F2F),
+                    ),
+                    onPressed: () => RemoteSync.ackSosAlert(alert.id),
+                    child: const Text('Marcar como visto'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Card do filho com localização ao vivo: mescla os dados locais com
+/// a posição mais recente vinda do Firestore (celular do filho).
+class _LiveChildCard extends StatelessWidget {
+  final AppDeps deps;
+  final Child child;
+  final VoidCallback onTap;
+  final VoidCallback onDelete;
+
+  const _LiveChildCard({
+    required this.deps,
+    required this.child,
+    required this.onTap,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!FirebaseService.available) {
+      return _ChildCard(child: child, onTap: onTap, onDelete: onDelete);
+    }
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: RemoteSync.locationStream(child.id),
+      builder: (context, snap) {
+        var merged = child;
+        final data = snap.data?.data();
+        if (data != null) {
+          final lat = (data['lat'] as num?)?.toDouble();
+          final lng = (data['lng'] as num?)?.toDouble();
+          final ts = data['updatedAt'];
+          final updatedAt = ts is Timestamp ? ts.toDate() : null;
+          if (lat != null && lng != null &&
+              (child.lastLat == null ||
+                  (updatedAt != null &&
+                      (child.lastUpdate == null ||
+                          updatedAt.isAfter(child.lastUpdate!))))) {
+            merged = child.copyWith(
+              lastLat: lat,
+              lastLng: lng,
+              lastUpdate: updatedAt ?? child.lastUpdate,
+              batteryLevel: (data['battery'] as num?)?.toInt() ??
+                  child.batteryLevel,
+            );
+          }
+        }
+        return _ChildCard(child: merged, onTap: onTap, onDelete: onDelete);
+      },
     );
   }
 }
