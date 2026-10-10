@@ -89,6 +89,7 @@ class RemoteSync {
   /// Envia a localização atual do filho para o Firestore
   /// (documento 'locations/{childId}'). Chamado periodicamente
   /// pelo app do filho e ao tocar em "Atualizar minha localização".
+  /// [speed] em m/s e [heading] em graus (0-360), quando disponíveis.
   static Future<void> sendLocation({
     required String childId,
     required String childName,
@@ -96,6 +97,8 @@ class RemoteSync {
     required double lat,
     required double lng,
     int? battery,
+    double? speed,
+    double? heading,
   }) async {
     if (!_fb) return;
     try {
@@ -107,6 +110,8 @@ class RemoteSync {
           'lat': lat,
           'lng': lng,
           'battery': battery,
+          if (speed != null) 'speed': speed,
+          if (heading != null) 'heading': heading,
           'updatedAt': FieldValue.serverTimestamp(),
         },
         SetOptions(merge: true),
