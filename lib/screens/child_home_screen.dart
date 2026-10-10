@@ -1,20 +1,25 @@
+import 'dart:async';
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/material.dart';
 import '../app_deps.dart';
 import '../models/models.dart';
+import '../services/firebase_service.dart';
+import '../services/sync_service.dart';
 import '../theme.dart';
 import 'welcome_screen.dart';
 
 /// Tela principal do filho(a).
 ///
 /// O que é REAL nesta versão:
-/// - Botão SOS registra o alerta com data, hora e posição GPS.
-/// - "Atualizar minha localização" usa o GPS de verdade.
+/// - Botão SOS registra o alerta e envia ao responsável via Firebase
+///   (quando disponível) com data, hora e posição GPS.
+/// - "Atualizar minha localização" usa o GPS de verdade e envia
+///   a posição ao responsável via Firebase.
+/// - A localização é enviada automaticamente a cada 3 minutos
+///   enquanto o app está aberto.
 /// - Nível de bateria é lido do aparelho.
 ///
-/// O que ainda é PROTÓTIPO:
-/// - O responsável vê esses dados no mesmo aparelho (demonstração).
-///   Com o Firebase, os dados chegam no celular do responsável.
+/// Sem Firebase/rede, tudo continua funcionando localmente neste aparelho.
 class ChildHomeScreen extends StatefulWidget {
   final AppDeps deps;
   const ChildHomeScreen({super.key, required this.deps});
@@ -27,11 +32,26 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
   Child? _child;
   bool _updating = false;
   String? _message;
+  Timer? _syncTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    // Envio periódico da localização ao responsável (a cada 3 minutos)
+    // enquanto o app do filho está aberto.
+    _syncTimer =
+        Timer.periodic(const Duration(minutes: 3), (_) => _pushLocation());
+    // Tenta um envio inicial logo ao abrir.
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted) _pushLocation();
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    super.dispose();
   }
 
   void _load() {
@@ -40,6 +60,48 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
     final children = widget.deps.storage.getChildren();
     _child = children.where((c) => c.id == id).firstOrNull;
     setState(() {});
+  }
+
+  /// ID do responsável: no mesmo aparelho vem do cadastro local;
+  /// no celular do filho, foi guardado na vinculação.
+  String _guardianId() =>
+      widget.deps.storage.getGuardian()?.id ??
+      widget.deps.storage.getGuardianId() ??
+      '';
+
+  /// Envia a localização atual do filho ao responsável via Firestore.
+  /// Silencioso: não mostra nada na tela; falha sem rede não quebra nada.
+  Future<void> _pushLocation() async {
+    final child = _child;
+    if (child == null || !FirebaseService.available) return;
+    try {
+      final pos = await widget.deps.location.getCurrentPosition();
+      if (pos == null) return;
+      int? battery;
+      try {
+        battery = await Battery().batteryLevel;
+      } catch (_) {}
+      await RemoteSync.sendLocation(
+        childId: child.id,
+        childName: child.name,
+        guardianId: _guardianId(),
+        lat: pos.latitude,
+        lng: pos.longitude,
+        battery: battery,
+      );
+      // Mantém o registro local coerente com o que foi enviado.
+      final updated = child.copyWith(
+        lastLat: pos.latitude,
+        lastLng: pos.longitude,
+        lastUpdate: DateTime.now(),
+        batteryLevel: battery,
+      );
+      await widget.deps.storage.upsertChild(updated);
+      _child = updated;
+      if (mounted) setState(() {});
+    } catch (_) {
+      // Envio periódico nunca deve quebrar o app.
+    }
   }
 
   Future<void> _updateLocation() async {
@@ -84,6 +146,15 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
       lat: pos.latitude,
       lng: pos.longitude,
     ));
+    // Envia também ao responsável via Firestore (tempo real).
+    await RemoteSync.sendLocation(
+      childId: _child!.id,
+      childName: _child!.name,
+      guardianId: _guardianId(),
+      lat: pos.latitude,
+      lng: pos.longitude,
+      battery: battery,
+    );
     _child = updated;
     setState(() {
       _updating = false;
@@ -125,7 +196,16 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
       lat: pos?.latitude,
       lng: pos?.longitude,
     ));
+    // Envia o SOS ao responsável via Firestore — ele vê em segundos.
+    await RemoteSync.sendSosAlert(
+      childId: _child!.id,
+      childName: _child!.name,
+      guardianId: _guardianId(),
+      lat: pos?.latitude,
+      lng: pos?.longitude,
+    );
     if (!mounted) return;
+    final notified = FirebaseService.available;
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -136,9 +216,12 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
             Text('SOS registrado'),
           ],
         ),
-        content: const Text(
-          'Seu alerta foi registrado com data, hora e localização. '
-          'Procure um adulto de confiança ou ligue 190 se precisar de ajuda imediata.',
+        content: Text(
+          notified
+              ? 'Seu responsável foi avisado com a sua localização atual. '
+                  'Procure um adulto de confiança ou ligue 190 se precisar de ajuda imediata.'
+              : 'Seu alerta foi registrado com data, hora e localização. '
+                  'Procure um adulto de confiança ou ligue 190 se precisar de ajuda imediata.',
         ),
         actions: [
           TextButton(
