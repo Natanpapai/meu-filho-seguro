@@ -46,6 +46,15 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Tela de emergência estilo Defesa Civil: abre em tela cheia por
+             cima do bloqueio quando o SOS é acionado. -->
+        <activity
+            android:name=".EmergencyAlertActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/NormalTheme" />
         <!-- Serviço de rastreamento contínuo (estilo Uber): envia a posição
              do filho ao Firestore a cada 15 segundos, mesmo em 2º plano. -->
         <service
