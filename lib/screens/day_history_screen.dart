@@ -7,6 +7,7 @@ import '../models/safety_models.dart';
 import '../services/firebase_service.dart';
 import '../services/history_service.dart';
 import '../theme.dart';
+import '../widgets/footprints.dart';
 
 /// Trajeto do dia: por onde o filho passou, com horários.
 ///
@@ -72,7 +73,16 @@ class _DayHistoryScreenState extends State<DayHistoryScreen> {
   Widget build(BuildContext context) {
     final children = widget.deps.storage.getChildren();
     return Scaffold(
-      appBar: AppBar(title: const Text('Trajeto do dia')),
+      appBar: AppBar(
+        title: const Text('Trajeto do dia'),
+        actions: [
+          IconButton(
+            tooltip: 'Atualizar',
+            icon: const Icon(Icons.refresh),
+            onPressed: _load,
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
@@ -188,20 +198,16 @@ class _DayHistoryScreenState extends State<DayHistoryScreen> {
                         userAgentPackageName:
                             'com.meufilhoseguro.app',
                       ),
-                      PolylineLayer(
-                        polylines: [
-                          Polyline(
-                            points: _points!
+                      MarkerLayer(
+                        markers: [
+                          // Passinhos do trajeto (em vez da linha).
+                          ...buildFootprintMarkers(
+                            _points!
                                 .map((p) =>
                                     LatLng(p.lat, p.lng))
                                 .toList(),
                             color: AppTheme.primary,
-                            strokeWidth: 4,
                           ),
-                        ],
-                      ),
-                      MarkerLayer(
-                        markers: [
                           Marker(
                             point: LatLng(_points!.first.lat,
                                 _points!.first.lng),
