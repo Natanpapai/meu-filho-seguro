@@ -240,16 +240,26 @@ class _MapTabState extends State<MapTab> with TickerProviderStateMixin {
                   ],
                 ),
               ),
-              // Seta de direção quando há heading; pino padrão caso contrário.
-              if (p.heading != null)
-                Transform.rotate(
-                  angle: p.heading! * pi / 180,
-                  child: const Icon(Icons.navigation,
-                      color: AppTheme.danger, size: 32),
-                )
-              else
-                const Icon(Icons.location_on,
-                    color: AppTheme.danger, size: 30),
+              // Bonequinho/a no lugar da seta: mantém a rotação pela
+              // direção do movimento e fica verde quando em movimento.
+              Builder(
+                builder: (_) {
+                  final icon = p.child.gender == 'girl'
+                      ? Icons.girl
+                      : Icons.boy;
+                  final color =
+                      moving ? Colors.green.shade700 : AppTheme.danger;
+                  final marker =
+                      Icon(icon, color: color, size: 36);
+                  if (p.heading != null && moving) {
+                    return Transform.rotate(
+                      angle: p.heading! * pi / 180,
+                      child: marker,
+                    );
+                  }
+                  return marker;
+                },
+              ),
             ],
           ),
         ),
