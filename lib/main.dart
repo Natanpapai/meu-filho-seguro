@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'app_deps.dart';
+import 'app_navigator.dart';
 import 'services/firebase_service.dart';
 import 'services/sos_alarm_service.dart';
 import 'services/storage_service.dart';
@@ -50,6 +51,9 @@ class MeuFilhoSeguroApp extends StatelessWidget {
       title: 'Meu Filho Seguro',
       theme: AppTheme.theme,
       debugShowCheckedModeBanner: false,
+      // Chave global: o monitor de SOS abre o popup pelo Navigator raiz,
+      // funcionando em qualquer tela (o builder fica acima do Navigator).
+      navigatorKey: appNavigatorKey,
       // Monitor global de SOS: popup + som em qualquer tela do app,
       // inclusive nas telas abertas após o login.
       builder: (context, child) =>
