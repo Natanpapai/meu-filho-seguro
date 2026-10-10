@@ -17,6 +17,35 @@ class RemoteSync {
 
   static FirebaseFirestore get _db => FirebaseService.firestore;
 
+  /// Cache de streams do Firestore.
+  ///
+  /// CORREÇÃO DE PERFORMANCE: várias telas chamam os métodos de stream
+  /// dentro do `build()` (MapTab, _LiveChildCard, _BatteryBanner,
+  /// SosMonitor...). Sem cache, cada rebuild criava um NOVO objeto de
+  /// stream, fazendo o StreamBuilder cancelar e reassinar o Firestore —
+  /// gerando reconexões e rebuilds em cascata a cada atualização.
+  /// Com o cache, o mesmo objeto de stream é reutilizado e o
+  /// StreamBuilder mantém a assinatura ativa.
+  static final Map<String, Stream> _streamCache = {};
+
+  static Stream<T> _cached<T>(String key, Stream<T> Function() create) {
+    final existing = _streamCache[key];
+    if (existing is Stream<T>) return existing;
+    final created = create();
+    _streamCache[key] = created;
+    return created;
+  }
+
+  /// Limpa o cache de streams (ex.: ao trocar de conta / logout).
+  static void clearStreamCache() {
+    _streamCache.clear();
+  }
+
+  /// Cache público de streams para outros serviços (ex.: RouteMonitor).
+  /// Devolve o mesmo objeto de stream para a mesma chave.
+  static Stream<T> cachedStream<T>(String key, Stream<T> Function() create) =>
+      _cached(key, create);
+
   // ---------------- SOS ----------------
 
   /// Envia um alerta SOS do filho para o Firestore.
@@ -60,31 +89,37 @@ class RemoteSync {
   /// não exigir índice composto no Firestore.
   ///
   /// Usa `guardianIds` (array) para suportar múltiplos responsáveis.
+  /// Usa cache: o mesmo objeto de stream é devolvido em rebuilds.
   static Stream<List<SosAlert>> sosAlertsStream(String guardianId) {
-    return sosAlertsInfoStream(guardianId).map(
-        (infos) => infos
-            .map((i) => SosAlert(
-                  id: i.id,
-                  childId: i.childId,
-                  childName: i.childName,
-                  guardianId: guardianId,
-                  lat: i.lat,
-                  lng: i.lng,
-                  timestamp: i.timestamp,
+    return _cached(
+        'sos_simple:$guardianId',
+        () => sosAlertsInfoStream(guardianId).map(
+            (infos) => infos
+                .map((i) => SosAlert(
+                      id: i.id,
+                      childId: i.childId,
+                      childName: i.childName,
+                      guardianId: guardianId,
+                      lat: i.lat,
+                      lng: i.lng,
+                      timestamp: i.timestamp,
                   ack: i.ack,
                 ))
-            .toList());
+            .toList()));
   }
 
   /// Versão do stream de SOS que inclui o flag de pânico silencioso.
+  /// Usa cache: o mesmo objeto de stream é devolvido em rebuilds.
   static Stream<List<SosAlertInfo>> sosAlertsInfoStream(String guardianId) {
     if (!_fb) return Stream.value(const <SosAlertInfo>[]);
-    return _db
-        .collection('sos_alerts')
-        .where('guardianIds', arrayContains: guardianId)
-        .limit(30)
-        .snapshots()
-        .map((snap) {
+    return _cached(
+        'sos:$guardianId',
+        () => _db
+            .collection('sos_alerts')
+            .where('guardianIds', arrayContains: guardianId)
+            .limit(30)
+            .snapshots()
+            .map((snap) {
       final list = snap.docs.map((d) {
         final m = Map<String, dynamic>.from(d.data());
         final ts = m['timestamp'];
@@ -116,7 +151,7 @@ class RemoteSync {
         return tb.compareTo(ta);
       });
       return list;
-    });
+        }));
   }
 
   /// Marca um alerta SOS como visto pelo responsável.
@@ -174,14 +209,17 @@ class RemoteSync {
 
   /// Stream do documento de localização de um filho.
   /// Retorna null quando não há dados ainda.
+  /// Usa cache: o mesmo objeto de stream é devolvido em rebuilds.
   static Stream<DocumentSnapshot<Map<String, dynamic>>> locationStream(
       String childId) {
     if (!_fb) return Stream.value(null).cast();
-    return _db.collection('locations').doc(childId).snapshots();
+    return _cached('location:$childId',
+        () => _db.collection('locations').doc(childId).snapshots());
   }
 
   /// Stream das localizações de vários filhos de uma vez
   /// (para o mapa do responsável).
+  /// Usa cache: o mesmo objeto de stream é devolvido em rebuilds.
   static Stream<QuerySnapshot<Map<String, dynamic>>> locationsStream(
       List<String> childIds) {
     if (!_fb || childIds.isEmpty) {
@@ -189,10 +227,13 @@ class RemoteSync {
     }
     // whereIn aceita no máximo 10 valores.
     final ids = childIds.length > 10 ? childIds.sublist(0, 10) : childIds;
-    return _db
-        .collection('locations')
-        .where(FieldPath.documentId, whereIn: ids)
-        .snapshots();
+    final key = 'locations:${ids.join(",")}';
+    return _cached(
+        key,
+        () => _db
+            .collection('locations')
+            .where(FieldPath.documentId, whereIn: ids)
+            .snapshots());
   }
 
   // ---------------- MULTI-RESPONSÁVEL ----------------
