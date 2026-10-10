@@ -7,6 +7,7 @@ import 'screens/child_home_screen.dart';
 import 'screens/guardian_home_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'theme.dart';
+import 'widgets/sos_monitor.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,6 +19,14 @@ void main() async {
   final storage = StorageService();
   await storage.init();
   final deps = AppDeps(storage);
+  // Se o responsável já está logado, liga a vigilância SOS em 2º plano
+  // (o alarme toca mesmo com o celular bloqueado ou o app fechado).
+  final g = storage.getGuardian();
+  if (storage.getRole() == 'guardian' &&
+      g != null &&
+      g.id.isNotEmpty) {
+    SosAlarmService.startWatch(g.id);
+  }
   runApp(MeuFilhoSeguroApp(deps: deps));
 }
 
@@ -41,6 +50,10 @@ class MeuFilhoSeguroApp extends StatelessWidget {
       title: 'Meu Filho Seguro',
       theme: AppTheme.theme,
       debugShowCheckedModeBanner: false,
+      // Monitor global de SOS: popup + som em qualquer tela do app,
+      // inclusive nas telas abertas após o login.
+      builder: (context, child) =>
+          SosMonitor(deps: deps, child: child ?? const SizedBox.shrink()),
       home: home,
     );
   }
