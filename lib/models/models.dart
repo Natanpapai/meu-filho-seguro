@@ -64,6 +64,7 @@ class Child {
   final String? pairCode;
   final DateTime? pairCodeExpiry;
   final bool paired;
+  final String gender; // 'boy' | 'girl' — usado no marcador do mapa
 
   // Último estado conhecido (atualizado pelo app do filho ou simulação)
   final double? lastLat;
@@ -81,6 +82,7 @@ class Child {
     this.pairCode,
     this.pairCodeExpiry,
     this.paired = false,
+    this.gender = 'boy',
     this.lastLat,
     this.lastLng,
     this.lastUpdate,
@@ -93,6 +95,7 @@ class Child {
     required String nickname,
     required DateTime birthDate,
     String? photoPath,
+    String gender = 'boy',
   }) {
     return Child(
       id: _uuid.v4(),
@@ -100,6 +103,7 @@ class Child {
       nickname: nickname,
       birthDate: birthDate,
       photoPath: photoPath,
+      gender: gender,
     );
   }
 
@@ -112,6 +116,7 @@ class Child {
     DateTime? lastUpdate,
     int? batteryLevel,
     String? status,
+    String? gender,
     bool clearPairCode = false,
   }) {
     return Child(
@@ -124,6 +129,7 @@ class Child {
       pairCodeExpiry:
           clearPairCode ? null : (pairCodeExpiry ?? this.pairCodeExpiry),
       paired: paired ?? this.paired,
+      gender: gender ?? this.gender,
       lastLat: lastLat ?? this.lastLat,
       lastLng: lastLng ?? this.lastLng,
       lastUpdate: lastUpdate ?? this.lastUpdate,
@@ -156,6 +162,7 @@ class Child {
         'lastUpdate': lastUpdate?.toIso8601String(),
         'batteryLevel': batteryLevel,
         'status': status,
+        'gender': gender,
       };
 
   factory Child.fromJson(Map<String, dynamic> j) => Child(
@@ -169,6 +176,7 @@ class Child {
             ? DateTime.parse(j['pairCodeExpiry'])
             : null,
         paired: j['paired'] ?? false,
+        gender: j['gender'] ?? 'boy',
         lastLat: (j['lastLat'] as num?)?.toDouble(),
         lastLng: (j['lastLng'] as num?)?.toDouble(),
         lastUpdate: j['lastUpdate'] != null
