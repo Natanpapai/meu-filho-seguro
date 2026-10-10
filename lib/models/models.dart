@@ -52,6 +52,23 @@ class Guardian {
         passwordHash: j['passwordHash'],
         isPremium: j['isPremium'] ?? false,
       );
+
+  Guardian copyWith({
+    String? name,
+    String? email,
+    String? phone,
+    String? passwordHash,
+    bool? isPremium,
+  }) {
+    return Guardian(
+      id: id,
+      name: name ?? this.name,
+      email: email ?? this.email,
+      phone: phone ?? this.phone,
+      passwordHash: passwordHash ?? this.passwordHash,
+      isPremium: isPremium ?? this.isPremium,
+    );
+  }
 }
 
 /// Perfil do filho(a).
@@ -108,6 +125,9 @@ class Child {
   }
 
   Child copyWith({
+    String? name,
+    String? nickname,
+    DateTime? birthDate,
     String? pairCode,
     DateTime? pairCodeExpiry,
     bool? paired,
@@ -121,9 +141,9 @@ class Child {
   }) {
     return Child(
       id: id,
-      name: name,
-      nickname: nickname,
-      birthDate: birthDate,
+      name: name ?? this.name,
+      nickname: nickname ?? this.nickname,
+      birthDate: birthDate ?? this.birthDate,
       photoPath: photoPath,
       pairCode: clearPairCode ? null : (pairCode ?? this.pairCode),
       pairCodeExpiry:
