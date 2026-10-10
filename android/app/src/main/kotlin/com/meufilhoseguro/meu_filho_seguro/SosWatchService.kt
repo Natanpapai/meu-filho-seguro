@@ -1,6 +1,5 @@
 package com.meufilhoseguro.meu_filho_seguro
 
-import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -253,23 +252,17 @@ class SosWatchService : Service() {
         nm.notify(childId.hashCode(), notification)
     }
 
+    /**
+     * SOS chegou: toca o alarme e mostra a tela de emergência estilo
+     * Defesa Civil SEMPRE — com o app aberto, fechado ou com a tela
+     * bloqueada, sem nenhuma barreira.
+     *
+     * O som não duplica: o Flutter verifica `isAlarming` antes de tocar
+     * o próprio alarme (ver `SosAlarmService.triggerAlarm`).
+     */
     private fun onSosAlert(id: String, childName: String) {
-        // Se o app estiver aberto, o Flutter toca o som (evita duplicar).
-        if (isAppInForeground()) return
         playAlarmSound()
         showAlertNotification(id, childName)
-    }
-
-    private fun isAppInForeground(): Boolean {
-        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val procs = am.runningAppProcesses ?: return false
-        for (p in procs) {
-            if (p.processName == packageName) {
-                return p.importance ==
-                    ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
-            }
-        }
-        return false
     }
 
     private fun playAlarmSound() {
