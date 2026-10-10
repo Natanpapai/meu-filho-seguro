@@ -12,8 +12,8 @@ import 'child_home_screen.dart';
 /// de 6 dígitos (válido por 10 minutos).
 /// Modo 'child': o filho digita o código no celular dele.
 ///
-/// REAL: a validação do código funciona de verdade neste aparelho.
-/// A vinculação entre 2 aparelhos diferentes virá com o Firebase.
+/// REAL: a validação do código funciona de verdade, inclusive entre
+/// 2 aparelhos diferentes (via Firestore). Sem rede, vale neste aparelho.
 class PairingScreen extends StatefulWidget {
   final AppDeps deps;
   final String mode; // 'guardian' | 'child'
