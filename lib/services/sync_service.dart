@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../models/models.dart';
+import '../models/safety_models.dart';
 import 'firebase_service.dart';
 
 /// Sincronização em tempo real entre os 2 celulares via Firestore.
@@ -20,23 +21,33 @@ class RemoteSync {
 
   /// Envia um alerta SOS do filho para o Firestore.
   /// O responsável vê em segundos via [sosAlertsStream].
+  ///
+  /// [guardianIds]: todos os responsáveis vinculados (pai e mãe).
+  /// [silent]: pânico silencioso — não faz barulho no celular do filho
+  /// (o responsável recebe normalmente, com alarme).
   static Future<void> sendSosAlert({
     required String childId,
     required String childName,
     required String guardianId,
     double? lat,
     double? lng,
+    List<String>? guardianIds,
+    bool silent = false,
   }) async {
     if (!_fb) return;
     try {
+      final gids =
+          (guardianIds == null || guardianIds.isEmpty) ? [guardianId] : guardianIds;
       await _db.collection('sos_alerts').add({
         'childId': childId,
         'childName': childName,
         'guardianId': guardianId,
+        'guardianIds': gids,
         'lat': lat,
         'lng': lng,
         'timestamp': FieldValue.serverTimestamp(),
         'ack': false,
+        'silent': silent,
       });
       debugPrint('[Sync] SOS enviado para o Firestore.');
     } catch (e) {
@@ -47,20 +58,54 @@ class RemoteSync {
   /// Stream dos alertas SOS endereçados a um responsável,
   /// mais recentes primeiro. A ordenação é feita no cliente para
   /// não exigir índice composto no Firestore.
+  ///
+  /// Usa `guardianIds` (array) para suportar múltiplos responsáveis.
   static Stream<List<SosAlert>> sosAlertsStream(String guardianId) {
-    if (!_fb) return Stream.value(const []);
+    return sosAlertsInfoStream(guardianId).map(
+        (infos) => infos
+            .map((i) => SosAlert(
+                  id: i.id,
+                  childId: i.childId,
+                  childName: i.childName,
+                  guardianId: guardianId,
+                  lat: i.lat,
+                  lng: i.lng,
+                  timestamp: i.timestamp,
+                  ack: i.ack,
+                ))
+            .toList());
+  }
+
+  /// Versão do stream de SOS que inclui o flag de pânico silencioso.
+  static Stream<List<SosAlertInfo>> sosAlertsInfoStream(String guardianId) {
+    if (!_fb) return Stream.value(const <SosAlertInfo>[]);
     return _db
         .collection('sos_alerts')
-        .where('guardianId', isEqualTo: guardianId)
+        .where('guardianIds', arrayContains: guardianId)
         .limit(30)
         .snapshots()
         .map((snap) {
       final list = snap.docs.map((d) {
         final m = Map<String, dynamic>.from(d.data());
-        // O Firestore entrega Timestamp; o modelo espera DateTime.
         final ts = m['timestamp'];
-        if (ts is Timestamp) m['timestamp'] = ts.toDate();
-        return SosAlert.fromMap(d.id, m);
+        DateTime? dt;
+        if (ts is Timestamp) {
+          dt = ts.toDate();
+        } else if (ts != null) {
+          try {
+            dt = DateTime.parse(ts.toString());
+          } catch (_) {}
+        }
+        return SosAlertInfo(
+          id: d.id,
+          childId: (m['childId'] as String?) ?? '',
+          childName: (m['childName'] as String?) ?? '',
+          lat: (m['lat'] as num?)?.toDouble(),
+          lng: (m['lng'] as num?)?.toDouble(),
+          timestamp: dt,
+          ack: (m['ack'] as bool?) ?? false,
+          silent: (m['silent'] as bool?) ?? false,
+        );
       }).toList();
       list.sort((a, b) {
         final ta = a.timestamp;
@@ -90,6 +135,7 @@ class RemoteSync {
   /// (documento 'locations/{childId}'). Chamado periodicamente
   /// pelo app do filho e ao tocar em "Atualizar minha localização".
   /// [speed] em m/s e [heading] em graus (0-360), quando disponíveis.
+  /// [guardianIds]: todos os responsáveis vinculados (multi-responsável).
   static Future<void> sendLocation({
     required String childId,
     required String childName,
@@ -99,14 +145,18 @@ class RemoteSync {
     int? battery,
     double? speed,
     double? heading,
+    List<String>? guardianIds,
   }) async {
     if (!_fb) return;
     try {
+      final gids =
+          (guardianIds == null || guardianIds.isEmpty) ? [guardianId] : guardianIds;
       await _db.collection('locations').doc(childId).set(
         {
           'childId': childId,
           'childName': childName,
           'guardianId': guardianId,
+          'guardianIds': gids,
           'lat': lat,
           'lng': lng,
           'battery': battery,
@@ -143,5 +193,43 @@ class RemoteSync {
         .collection('locations')
         .where(FieldPath.documentId, whereIn: ids)
         .snapshots();
+  }
+
+  // ---------------- MULTI-RESPONSÁVEL ----------------
+
+  /// Lê a lista de responsáveis vinculados a um filho
+  /// (documento 'child_guardians/{childId}').
+  static Future<List<String>> fetchGuardianIds(String childId) async {
+    if (!_fb) return const [];
+    try {
+      final doc =
+          await _db.collection('child_guardians').doc(childId).get();
+      final data = doc.data();
+      if (data == null) return const [];
+      final ids = data['guardianIds'];
+      if (ids is List) {
+        return ids.map((e) => e.toString()).toList();
+      }
+      return const [];
+    } catch (e) {
+      debugPrint('[Sync] falha ao ler responsáveis: $e');
+      return const [];
+    }
+  }
+
+  /// Adiciona um responsável à lista de vinculados do filho
+  /// (usado na vinculação do 1º e do 2º responsável).
+  static Future<void> addGuardianToChild(
+      String childId, String guardianId) async {
+    if (!_fb) return;
+    try {
+      await _db.collection('child_guardians').doc(childId).set({
+        'guardianIds': FieldValue.arrayUnion([guardianId]),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      debugPrint('[Sync] responsável vinculado ao filho.');
+    } catch (e) {
+      debugPrint('[Sync] falha ao vincular responsável: $e');
+    }
   }
 }
