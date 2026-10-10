@@ -39,7 +39,7 @@ class LocationSharingService : Service() {
 
         private const val CHANNEL_ID = "location_sharing_channel"
         private const val NOTIF_ID = 1001
-        private const val INTERVAL_MS = 5_000L
+        private const val INTERVAL_MS = 2_000L
 
         private const val PREFS = "mfs_sharing"
         private const val KEY_CHILD_ID = "child_id"
