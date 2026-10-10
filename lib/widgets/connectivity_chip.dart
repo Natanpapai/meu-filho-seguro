@@ -4,13 +4,24 @@ import 'package:flutter/material.dart';
 /// Indicador de conexão na barra do app do responsável.
 /// Mostra se o celular tem internet (WiFi ou dados móveis) ou está offline.
 /// Ajuda a diagnosticar: se estiver offline, os dados do filho não atualizam.
-class ConnectivityChip extends StatelessWidget {
+///
+/// OTIMIZAÇÃO: StatefulWidget com UMA única instância de Connectivity.
+/// Antes era StatelessWidget criando `Connectivity()` novo a cada build
+/// da AppBar — churn de streams a cada rebuild da tela.
+class ConnectivityChip extends StatefulWidget {
   const ConnectivityChip({super.key});
+
+  @override
+  State<ConnectivityChip> createState() => _ConnectivityChipState();
+}
+
+class _ConnectivityChipState extends State<ConnectivityChip> {
+  final Connectivity _connectivity = Connectivity();
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<ConnectivityResult>>(
-      stream: Connectivity().onConnectivityChanged,
+      stream: _connectivity.onConnectivityChanged,
       builder: (context, snap) {
         final results = snap.data ?? const [ConnectivityResult.none];
         final online = results.any((r) =>
