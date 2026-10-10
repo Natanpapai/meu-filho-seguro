@@ -259,12 +259,14 @@ class RouteMonitor {
     if (!FirebaseService.available) {
       return Stream.value(const <RouteAlert>[]);
     }
-    return FirebaseService.firestore
-        .collection('route_alerts')
-        .where('guardianIds', arrayContains: guardianId)
-        .limit(20)
-        .snapshots()
-        .map((snap) {
+    return RemoteSync.cachedStream(
+        'route_alerts:$guardianId',
+        () => FirebaseService.firestore
+            .collection('route_alerts')
+            .where('guardianIds', arrayContains: guardianId)
+            .limit(20)
+            .snapshots()
+            .map((snap) {
       final list = snap.docs.map((d) {
         final m = Map<String, dynamic>.from(d.data());
         final ts = m['timestamp'];
@@ -285,7 +287,7 @@ class RouteMonitor {
               (a.timestamp == null ||
                   DateTime.now().difference(a.timestamp!).inHours < 24))
           .toList();
-    });
+        }));
   }
 
   /// Marca um alerta de rota como visto.
