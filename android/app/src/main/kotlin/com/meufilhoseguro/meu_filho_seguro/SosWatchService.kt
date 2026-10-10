@@ -12,7 +12,9 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FirebaseFirestore
@@ -40,6 +42,12 @@ class SosWatchService : Service() {
         private const val ALERT_CHANNEL_ID = "sos_alert_channel"
         private const val NOTIF_ID = 1002
         private const val ALERT_NOTIF_ID = 1003
+        private const val OFFLINE_NOTIF_ID = 1004
+
+        /** Sem localização há mais de 5 min = filho offline. */
+        private const val OFFLINE_AFTER_MS = 5 * 60 * 1000L
+        /** Verifica offline a cada 60 s (1 leitura por filho/min: barato). */
+        private const val OFFLINE_CHECK_MS = 60 * 1000L
 
         private const val PREFS = "mfs_sos_watch"
         private const val KEY_GUARDIAN_ID = "guardian_id"
@@ -56,6 +64,28 @@ class SosWatchService : Service() {
     private var mediaPlayer: MediaPlayer? = null
     private val alarmedIds = mutableSetOf<String>()
     private var running = false
+
+    /**
+     * Verificação periódica de filho offline (sem localização há +5 min).
+     * Roda a cada 60 s enquanto a vigilância estiver ativa — assim o
+     * responsável é avisado mesmo com o app fechado.
+     */
+    private val offlineHandler = Handler(Looper.getMainLooper())
+
+    /** Episódios de offline já notificados: "childId:updatedAtMillis". */
+    private val offlineAlerted = mutableSetOf<String>()
+
+    private val offlineCheck = object : Runnable {
+        override fun run() {
+            if (running) {
+                checkOfflineChildren()
+                offlineHandler.postDelayed(this, OFFLINE_CHECK_MS)
+            }
+        }
+    }
+
+    /** GuardianId deste responsável (para filtrar os filhos dele). */
+    private var watchGuardianId: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -82,6 +112,7 @@ class SosWatchService : Service() {
             stopSelf()
             return
         }
+        watchGuardianId = guardianId
         running = true
 
         createChannels()
@@ -116,6 +147,110 @@ class SosWatchService : Service() {
                     )
                 }
             }
+
+        // Verificação periódica de filho offline (mesmo com app fechado).
+        offlineHandler.removeCallbacks(offlineCheck)
+        offlineHandler.postDelayed(offlineCheck, OFFLINE_CHECK_MS)
+    }
+
+    /**
+     * Verifica se algum filho deste responsável está sem enviar
+     * localização há mais de 5 minutos (celular desligado, sem internet
+     * ou app morto). Notifica 1x por episódio de offline.
+     *
+     * Limitação honesta: um celular desligado NÃO pode ser rastreado
+     * (sem GPS, sem internet). Este alerta informa que o rastreamento
+     * parou — e o app mostra a última posição conhecida.
+     */
+    private fun checkOfflineChildren() {
+        val gid = watchGuardianId ?: return
+        val db = FirebaseFirestore.getInstance()
+        // Junta as duas formas de vínculo (responsável principal e
+        // multi-responsável) sem exigir índice composto.
+        val found = mutableMapOf<String, com.google.firebase.firestore.DocumentSnapshot>()
+        var pending = 2
+        fun maybeDone() {
+            if (--pending != 0) return
+            val now = System.currentTimeMillis()
+            for ((childId, doc) in found) {
+                val ts = doc.getTimestamp("updatedAt") ?: continue
+                val staleMs = now - ts.toDate().time
+                val episodeKey = "$childId:${ts.toDate().time}"
+                if (staleMs >= OFFLINE_AFTER_MS) {
+                    if (offlineAlerted.add(episodeKey)) {
+                        val name = doc.getString("childName") ?: "Seu filho"
+                        showOfflineNotification(childId, name, ts.toDate().time)
+                    }
+                } else {
+                    // Voltou a enviar: libera novos alertas futuros.
+                    offlineAlerted.removeAll { it.startsWith("$childId:") }
+                    try {
+                        (getSystemService(Context.NOTIFICATION_SERVICE)
+                            as NotificationManager)
+                            .cancel(childId.hashCode())
+                    } catch (e: Exception) { }
+                }
+            }
+        }
+        db.collection("locations")
+            .whereEqualTo("guardianId", gid)
+            .get()
+            .addOnSuccessListener { snap ->
+                for (d in snap.documents) found[d.id] = d
+                maybeDone()
+            }
+            .addOnFailureListener { maybeDone() }
+        db.collection("locations")
+            .whereArrayContains("guardianIds", gid)
+            .get()
+            .addOnSuccessListener { snap ->
+                for (d in snap.documents) found[d.id] = d
+                maybeDone()
+            }
+            .addOnFailureListener { maybeDone() }
+    }
+
+    /**
+     * Notificação de filho offline: prioridade alta, visível na tela de
+     * bloqueio. Tocar abre o app. É cancelada quando o filho volta a
+     * enviar a localização.
+     */
+    private fun showOfflineNotification(
+        childId: String,
+        childName: String,
+        lastUpdateMs: Long
+    ) {
+        val openApp = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pending = PendingIntent.getActivity(
+            this, childId.hashCode(), openApp,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val mins = ((System.currentTimeMillis() - lastUpdateMs) / 60000).toInt()
+        val ago = if (mins < 60) "há $mins min" else {
+            val h = mins / 60
+            val m = mins % 60
+            if (m == 0) "há $h h" else "há $h h $m min"
+        }
+        val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
+            .setContentTitle("⚠️ $childName está offline")
+            .setContentText(
+                "Sem localização $ago. Pode ser celular desligado ou " +
+                    "sem internet. O mapa mostra a última posição conhecida."
+            )
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setContentIntent(pending)
+            .setAutoCancel(false)
+            .setOngoing(false)
+            .build()
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE)
+            as NotificationManager
+        nm.notify(childId.hashCode(), notification)
     }
 
     private fun onSosAlert(id: String, childName: String) {
@@ -265,6 +400,7 @@ class SosWatchService : Service() {
 
     private fun stopWatch() {
         running = false
+        offlineHandler.removeCallbacks(offlineCheck)
         try { listener?.remove() } catch (e: Exception) { }
         listener = null
         stopAlarmSound()
@@ -279,6 +415,7 @@ class SosWatchService : Service() {
 
     override fun onDestroy() {
         running = false
+        offlineHandler.removeCallbacks(offlineCheck)
         try { listener?.remove() } catch (e: Exception) { }
         stopAlarmSound()
         super.onDestroy()
