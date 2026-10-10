@@ -357,6 +357,9 @@ class AuthService {
       await SosAlarmService.stopWatch();
     } catch (_) {}
     SosAlarmService.reset();
+    // Limpa o cache de streams do Firestore (evita vazar dados
+    // da conta anterior e força nova assinatura no próximo login).
+    RemoteSync.clearStreamCache();
     // Desloga do Firebase Auth também, se estiver disponível.
     if (_fb) {
       try {
