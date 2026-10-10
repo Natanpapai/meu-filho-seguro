@@ -1,35 +1,107 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../app_deps.dart';
+import '../models/models.dart';
+import '../services/firebase_service.dart';
+import '../services/sync_service.dart';
 import '../theme.dart';
+
+/// Posição remota vinda do Firestore (celular do filho).
+class _RemoteLoc {
+  final double lat;
+  final double lng;
+  final DateTime? updatedAt;
+  _RemoteLoc(this.lat, this.lng, this.updatedAt);
+}
 
 /// Aba Mapa: mostra filhos e locais seguros no mapa.
 /// Mapa via OpenStreetMap (sem necessidade de chave de API).
+///
+/// A posição dos filhos é mesclada em tempo real: os dados locais
+/// são combinados com a localização enviada pelo celular do filho
+/// via Firestore (a mais recente prevalece).
 class MapTab extends StatelessWidget {
   final AppDeps deps;
   const MapTab({super.key, required this.deps});
 
   @override
   Widget build(BuildContext context) {
-    final children =
-        deps.storage.getChildren().where((c) => c.lastLat != null).toList();
+    final children = deps.storage.getChildren();
+    final ids = children.map((c) => c.id).toList();
+    if (!FirebaseService.available || ids.isEmpty) {
+      return _buildMap(children, const {});
+    }
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: RemoteSync.locationsStream(ids),
+      builder: (context, snap) {
+        final remote = <String, _RemoteLoc>{};
+        for (final d in snap.data?.docs ?? const []) {
+          final m = d.data();
+          final lat = (m['lat'] as num?)?.toDouble();
+          final lng = (m['lng'] as num?)?.toDouble();
+          if (lat == null || lng == null) continue;
+          final ts = m['updatedAt'];
+          remote[d.id] =
+              _RemoteLoc(lat, lng, ts is Timestamp ? ts.toDate() : null);
+        }
+        return _buildMap(children, remote);
+      },
+    );
+  }
+
+  /// Resolve a melhor posição conhecida de cada filho:
+  /// a remota (Firestore) prevalece quando é mais recente que a local.
+  /// Retorna null quando não há posição alguma.
+  ({double lat, double lng, DateTime? updatedAt})? _resolve(
+      Child c, Map<String, _RemoteLoc> remote) {
+    final r = remote[c.id];
+    if (r != null &&
+        (c.lastLat == null ||
+            (r.updatedAt != null &&
+                (c.lastUpdate == null ||
+                    r.updatedAt!.isAfter(c.lastUpdate!))))) {
+      return (lat: r.lat, lng: r.lng, updatedAt: r.updatedAt);
+    }
+    if (c.lastLat != null && c.lastLng != null) {
+      return (lat: c.lastLat!, lng: c.lastLng!, updatedAt: c.lastUpdate);
+    }
+    return null;
+  }
+
+  Widget _buildMap(List<Child> children, Map<String, _RemoteLoc> remote) {
     final places = deps.storage.getPlaces();
 
+    final positioned = <({Child child, double lat, double lng, DateTime? updatedAt})>[];
+    for (final c in children) {
+      final p = _resolve(c, remote);
+      if (p != null) {
+        positioned.add((
+          child: c,
+          lat: p.lat,
+          lng: p.lng,
+          updatedAt: p.updatedAt
+        ));
+      }
+    }
+
     LatLng center = const LatLng(-22.9068, -43.1729); // Rio de Janeiro
-    if (children.isNotEmpty) {
-      center = LatLng(children.first.lastLat!, children.first.lastLng!);
+    if (positioned.isNotEmpty) {
+      center = LatLng(positioned.first.lat, positioned.first.lng);
     } else if (places.isNotEmpty) {
       center = LatLng(places.first.lat, places.first.lng);
     }
 
     final markers = <Marker>[];
-    for (final c in children) {
+    for (final p in positioned) {
+      final name =
+          p.child.nickname.isNotEmpty ? p.child.nickname : p.child.name;
       markers.add(
         Marker(
-          point: LatLng(c.lastLat!, c.lastLng!),
-          width: 110,
-          height: 60,
+          point: LatLng(p.lat, p.lng),
+          width: 130,
+          height: 76,
           child: Column(
             children: [
               Container(
@@ -39,12 +111,21 @@ class MapTab extends StatelessWidget {
                   color: AppTheme.primary,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Text(
-                  c.nickname.isNotEmpty ? c.nickname : c.name,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600),
+                child: Column(
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      AppTheme.timeAgo(p.updatedAt),
+                      style: const TextStyle(
+                          color: Colors.white70, fontSize: 9),
+                    ),
+                  ],
                 ),
               ),
               const Icon(Icons.location_on,
@@ -54,14 +135,14 @@ class MapTab extends StatelessWidget {
         ),
       );
     }
-    for (final p in places) {
+    for (final pl in places) {
       markers.add(
         Marker(
-          point: LatLng(p.lat, p.lng),
+          point: LatLng(pl.lat, pl.lng),
           width: 40,
           height: 40,
           child: Icon(
-            p.type == 'casa' ? Icons.home : Icons.school,
+            pl.type == 'casa' ? Icons.home : Icons.school,
             color: AppTheme.primaryDark,
             size: 30,
           ),
@@ -71,13 +152,13 @@ class MapTab extends StatelessWidget {
 
     final circles = places
         .map(
-          (p) => CircleMarker(
-            point: LatLng(p.lat, p.lng),
-            radius: p.radiusMeters,
+          (pl) => CircleMarker(
+            point: LatLng(pl.lat, pl.lng),
+            radius: pl.radiusMeters,
             useRadiusInMeter: true,
-            color: (p.type == 'casa' ? Colors.green : Colors.blue)
+            color: (pl.type == 'casa' ? Colors.green : Colors.blue)
                 .withValues(alpha: 0.15),
-            borderColor: p.type == 'casa' ? Colors.green : Colors.blue,
+            borderColor: pl.type == 'casa' ? Colors.green : Colors.blue,
             borderStrokeWidth: 2,
           ),
         )
@@ -100,7 +181,7 @@ class MapTab extends StatelessWidget {
             MarkerLayer(markers: markers),
           ],
         ),
-        if (children.isEmpty && places.isEmpty)
+        if (positioned.isEmpty && places.isEmpty)
           Positioned(
             left: 16,
             right: 16,
