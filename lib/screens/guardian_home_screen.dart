@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../app_deps.dart';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
+import '../services/sos_alarm_service.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
 import 'add_child_screen.dart';
@@ -11,6 +12,7 @@ import 'map_tab.dart';
 import 'history_tab.dart';
 import 'settings_tab.dart';
 import 'pairing_screen.dart';
+import '../widgets/connectivity_chip.dart';
 
 /// Tela principal do responsável: filhos, status, mapa, histórico e ajustes.
 class GuardianHomeScreen extends StatefulWidget {
@@ -34,6 +36,7 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
       appBar: AppBar(
         title: Text(titles[_tab]),
         actions: [
+          const ConnectivityChip(),
           if (_tab == 0)
             IconButton(
               tooltip: 'Vincular celular do filho',
@@ -192,6 +195,7 @@ class _HomeTab extends StatelessWidget {
 
 /// Banner de alertas SOS em tempo real (via Firestore).
 /// Aparece no topo da aba "Filhos" segundos após o filho acionar o SOS.
+/// Também dispara o alarme sonoro (fura silencioso/DND) + popup full-screen.
 class _SosBanner extends StatelessWidget {
   final AppDeps deps;
   const _SosBanner({required this.deps});
@@ -211,6 +215,13 @@ class _SosBanner extends StatelessWidget {
                 DateTime.now().difference(a.timestamp!).inHours < 24)
             .toList();
         if (alerts.isEmpty) return const SizedBox.shrink();
+        // Dispara o alarme (som + popup) para cada alerta novo.
+        // O SosAlarmService garante que cada alerta toca só uma vez.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          for (final a in alerts) {
+            SosAlarmService.triggerAlarm(a);
+          }
+        });
         return Column(
           children: [
             for (final a in alerts) _SosCard(alert: a),
@@ -273,7 +284,11 @@ class _SosCard extends StatelessWidget {
                       backgroundColor: Colors.white,
                       foregroundColor: const Color(0xFFD32F2F),
                     ),
-                    onPressed: () => RemoteSync.ackSosAlert(alert.id),
+                    onPressed: () {
+                      // Para o som do alarme e dispensa o banner.
+                      SosAlarmService.stopAlarm(alert.id);
+                      RemoteSync.ackSosAlert(alert.id);
+                    },
                     child: const Text('Marcar como visto'),
                   ),
                 ),
