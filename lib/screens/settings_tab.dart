@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../app_deps.dart';
 import '../models/models.dart';
 import '../theme.dart';
+import 'alarm_sound_screen.dart';
 import 'places_screen.dart';
 import 'welcome_screen.dart';
 
@@ -63,6 +64,16 @@ class SettingsTab extends StatelessWidget {
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute(
                 builder: (_) => PlacesScreen(deps: deps)),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _MenuTile(
+          icon: Icons.alarm,
+          title: 'Som do alarme SOS',
+          subtitle: 'Escolha o som que toca na emergência',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+                builder: (_) => const AlarmSoundScreen()),
           ),
         ),
         const SizedBox(height: 12),
@@ -183,7 +194,7 @@ class _MenuTile extends StatelessWidget {
             color: AppTheme.primary.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: const Icon(Icons.home_work_outlined, color: AppTheme.primary),
+          child: Icon(icon, color: AppTheme.primary),
         ),
         title: Text(title,
             style: const TextStyle(fontWeight: FontWeight.w600)),
