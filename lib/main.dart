@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'app_deps.dart';
+import 'services/firebase_service.dart';
 import 'services/storage_service.dart';
 import 'screens/child_home_screen.dart';
 import 'screens/guardian_home_screen.dart';
@@ -8,6 +9,9 @@ import 'theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Inicializa o Firebase (nuvem). Se falhar, o app segue no modo local.
+  // O Firebase permite a vinculação entre 2 celulares diferentes.
+  await FirebaseService.init();
   final storage = StorageService();
   await storage.init();
   final deps = AppDeps(storage);
