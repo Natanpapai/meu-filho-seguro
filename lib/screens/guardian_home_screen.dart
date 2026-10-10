@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -325,12 +326,16 @@ class _LiveChildCard extends StatelessWidget {
       stream: RemoteSync.locationStream(child.id),
       builder: (context, snap) {
         var merged = child;
+        bool? moving;
         final data = snap.data?.data();
         if (data != null) {
           final lat = (data['lat'] as num?)?.toDouble();
           final lng = (data['lng'] as num?)?.toDouble();
           final ts = data['updatedAt'];
           final updatedAt = ts is Timestamp ? ts.toDate() : null;
+          final speed = (data['speed'] as num?)?.toDouble();
+          // Acima de ~2 km/h considera em movimento.
+          if (speed != null) moving = speed > 0.6;
           if (lat != null && lng != null &&
               (child.lastLat == null ||
                   (updatedAt != null &&
@@ -345,8 +350,55 @@ class _LiveChildCard extends StatelessWidget {
             );
           }
         }
-        return _ChildCard(child: merged, onTap: onTap, onDelete: onDelete);
+        return _ChildCard(
+            child: merged, onTap: onTap, onDelete: onDelete, moving: moving);
       },
+    );
+  }
+}
+
+/// Texto "há X" que atualiza sozinho a cada segundo — mostra segundos
+/// quando a atualização é recente (tempo real).
+class _LiveAgo extends StatefulWidget {
+  final DateTime? updatedAt;
+  final int? batteryLevel;
+  const _LiveAgo({this.updatedAt, this.batteryLevel});
+
+  @override
+  State<_LiveAgo> createState() => _LiveAgoState();
+}
+
+class _LiveAgoState extends State<_LiveAgo> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  String _ago() {
+    final dt = widget.updatedAt;
+    if (dt == null) return 'nunca';
+    final diff = DateTime.now().difference(dt);
+    if (diff.inSeconds < 60) return 'há ${diff.inSeconds} s';
+    return AppTheme.timeAgo(dt);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      'Atualizado ${_ago()}'
+      '${widget.batteryLevel != null ? ' • Bateria ${widget.batteryLevel}%' : ''}',
+      style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
     );
   }
 }
@@ -356,8 +408,14 @@ class _ChildCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onDelete;
 
+  /// true = em movimento, false = parado, null = sem dados de velocidade.
+  final bool? moving;
+
   const _ChildCard(
-      {required this.child, required this.onTap, required this.onDelete});
+      {required this.child,
+      required this.onTap,
+      required this.onDelete,
+      this.moving});
 
   @override
   Widget build(BuildContext context) {
@@ -455,14 +513,50 @@ class _ChildCard extends StatelessWidget {
                             ),
                           ),
                         ],
+                        if (moving != null) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: (moving!
+                                      ? Colors.green
+                                      : Colors.grey)
+                                  .withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                      color: moving!
+                                          ? Colors.green
+                                          : Colors.grey,
+                                      shape: BoxShape.circle),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  moving! ? 'Em movimento' : 'Parado',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: moving!
+                                          ? Colors.green.shade700
+                                          : Colors.grey.shade600),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      'Atualizado ${AppTheme.timeAgo(child.lastUpdate)}'
-                      '${child.batteryLevel != null ? ' • Bateria ${child.batteryLevel}%' : ''}',
-                      style: const TextStyle(
-                          fontSize: 11, color: AppTheme.textMuted),
+                    _LiveAgo(
+                      updatedAt: child.lastUpdate,
+                      batteryLevel: child.batteryLevel,
                     ),
                   ],
                 ),
