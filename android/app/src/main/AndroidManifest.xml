@@ -14,6 +14,8 @@
     <!-- Estado da rede: indicador online/offline e diagnóstico de dados móveis -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Reiniciar o rastreamento sozinho após o celular ligar -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:label="Meu Filho Seguro"
@@ -67,6 +69,14 @@
             android:name=".SosWatchService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- Reinicia o rastreamento/vigilância sozinho após o boot. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
