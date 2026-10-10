@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1035863152013",
+    "project_id": "meu-filho-seguro-13e18",
+    "storage_bucket": "meu-filho-seguro-13e18.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1035863152013:android:b7ba4aa176b219c80259c4",
+        "android_client_info": {
+          "package_name": "com.meufilhoseguro.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCSdiO6Kt1FuAZyReIX8zHgBAboszc-2jI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
