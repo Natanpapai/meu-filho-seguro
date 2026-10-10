@@ -125,9 +125,11 @@ class SosWatchService : Service() {
 
         // Ouve SOS deste responsável (filtro de ack feito no cliente para
         // não exigir índice composto no Firestore).
+        // Usa o array `guardianIds` (não o campo único `guardianId`) para
+        // que TODOS os responsáveis vinculados (pai e mãe) recebam o alerta.
         listener = FirebaseFirestore.getInstance()
             .collection("sos_alerts")
-            .whereEqualTo("guardianId", guardianId)
+            .whereArrayContains("guardianIds", guardianId)
             .addSnapshotListener { snap, _ ->
                 if (snap == null) return@addSnapshotListener
                 for (doc in snap.documents) {
