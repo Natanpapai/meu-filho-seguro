@@ -20,6 +20,7 @@ class _GuardianAuthScreenState extends State<GuardianAuthScreen>
   final _email = TextEditingController();
   final _phone = TextEditingController();
   final _password = TextEditingController();
+  bool _obscurePassword = true;
   bool _loading = false;
   String? _error;
 
@@ -141,10 +142,22 @@ class _GuardianAuthScreenState extends State<GuardianAuthScreen>
             ],
             TextFormField(
               controller: _password,
-              obscureText: true,
-              decoration: const InputDecoration(
+              obscureText: _obscurePassword,
+              decoration: InputDecoration(
                 labelText: 'Senha',
-                prefixIcon: Icon(Icons.lock_outline),
+                prefixIcon: const Icon(Icons.lock_outline),
+                suffixIcon: IconButton(
+                  tooltip: _obscurePassword
+                      ? 'Mostrar senha'
+                      : 'Ocultar senha',
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                  ),
+                  onPressed: () => setState(
+                      () => _obscurePassword = !_obscurePassword),
+                ),
               ),
               validator: (v) => (v == null || v.length < 4)
                   ? 'Senha com no mínimo 4 caracteres'
