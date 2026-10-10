@@ -1,0 +1,44 @@
+# Plano B — build do APK fora do ambiente local (GitHub Actions)
+# Roda SOMENTE quando disparado manualmente (aba Actions > Build APK > Run workflow).
+name: Build APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17 (exigido pelo Android Gradle Plugin 8.x)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter (canal stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Pub get
+        run: flutter pub get
+        working-directory: .
+
+      - name: Flutter analyze (não bloqueia o build)
+        run: flutter analyze || true
+        working-directory: .
+
+      - name: Build APK release
+        run: flutter build apk --release
+        working-directory: .
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: meu-filho-seguro-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
