@@ -6,7 +6,7 @@ import 'alarm_sound_screen.dart';
 import 'places_screen.dart';
 import 'welcome_screen.dart';
 
-/// Aba Ajustes: perfil, locais, Premium (estrutura) e saída.
+/// Aba Ajustes: perfil, locais, som do alarme e saída.
 class SettingsTab extends StatelessWidget {
   final AppDeps deps;
   final Guardian? guardian;
@@ -77,46 +77,9 @@ class SettingsTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        Card(
-          color: AppTheme.accent.withValues(alpha: 0.15),
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(Icons.workspace_premium,
-                        color: Color(0xFFB8860B)),
-                    SizedBox(width: 8),
-                    Text(
-                      'Meu Filho Seguro Premium',
-                      style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Em breve: histórico estendido, mais de 2 locais, '
-                  'alertas por WhatsApp e relatórios semanais.\n\n'
-                  'Estrutura pronta — nenhuma cobrança nesta versão.',
-                  style: TextStyle(
-                      fontSize: 13, color: AppTheme.textMuted),
-                ),
-                const SizedBox(height: 12),
-                OutlinedButton(
-                  onPressed: () => ScaffoldMessenger.of(context)
-                      .showSnackBar(const SnackBar(
-                          content: Text(
-                              'O Premium será liberado nas próximas versões.'))),
-                  child: const Text('Quero ser avisado'),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
+        // NOTA (versão de teste do proprietário): todas as funções estão
+        // 100% liberadas nesta versão — nenhum bloqueio ou paywall.
+        // O card do Premium só aparece na versão comercial futura.
         _MenuTile(
           icon: Icons.privacy_tip_outlined,
           title: 'Privacidade',
