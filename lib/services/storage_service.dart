@@ -12,6 +12,8 @@ class StorageService {
   static const _kEvents = 'mfs_events';
   static const _kSessionChildId = 'mfs_session_child_id';
   static const _kRole = 'mfs_role'; // 'guardian' | 'child'
+  static const _kGuardianId =
+      'mfs_guardian_id'; // id do responsável (para o celular do filho)
 
   late SharedPreferences _prefs;
 
@@ -25,6 +27,13 @@ class StorageService {
   Future<void> setSessionChildId(String id) =>
       _prefs.setString(_kSessionChildId, id);
   String? getSessionChildId() => _prefs.getString(_kSessionChildId);
+
+  /// ID do responsável, salvo no celular do filho no momento da
+  /// vinculação. Usado para enviar SOS e localização ao Firestore
+  /// endereçados ao responsável certo.
+  Future<void> setGuardianId(String id) =>
+      _prefs.setString(_kGuardianId, id);
+  String? getGuardianId() => _prefs.getString(_kGuardianId);
   Future<void> clearSession() async {
     await _prefs.remove(_kRole);
     await _prefs.remove(_kSessionChildId);
