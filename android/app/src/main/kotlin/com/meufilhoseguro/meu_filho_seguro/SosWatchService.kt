@@ -257,12 +257,68 @@ class SosWatchService : Service() {
      * Defesa Civil SEMPRE — com o app aberto, fechado ou com a tela
      * bloqueada, sem nenhuma barreira.
      *
+     * Estratégia em 3 camadas (a primeira que funcionar vence):
+     * 1. Notificação com fullScreenIntent (caminho oficial do Android).
+     * 2. Abertura DIRETA da EmergencyAlertActivity (fallback para quando
+     *    o fullScreenIntent é bloqueado — ex. Android 14+ sem a permissão
+     *    "usar intenção de tela cheia" liberada pelo usuário).
+     * 3. WakeLock breve para acender a tela.
+     *
      * O som não duplica: o Flutter verifica `isAlarming` antes de tocar
      * o próprio alarme (ver `SosAlarmService.triggerAlarm`).
      */
     private fun onSosAlert(id: String, childName: String) {
         playAlarmSound()
         showAlertNotification(id, childName)
+        wakeScreen()
+        launchEmergencyScreenDirect(id, childName)
+    }
+
+    /**
+     * Fallback: abre a tela de emergência diretamente, sem depender do
+     * fullScreenIntent da notificação. Em Android 10+ o sistema pode
+     * bloquear a abertura vinda de 2º plano ("Background activity start
+     * blocked") — por isso o try/catch: é melhor esforço, sem crash.
+     * Na prática funciona em muitos aparelhos/OEMs e cobre o caso em que
+     * o usuário não liberou a permissão de tela cheia no Android 14+.
+     */
+    private fun launchEmergencyScreenDirect(id: String, childName: String) {
+        try {
+            val intent =
+                Intent(this, EmergencyAlertActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(EmergencyAlertActivity.EXTRA_ALERT_ID, id)
+                    putExtra(EmergencyAlertActivity.EXTRA_CHILD_NAME, childName)
+                }
+            startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * Acende a tela por alguns segundos para o alerta ser visto mesmo
+     * com o aparelho bloqueado/em repouso. A permissão WAKE_LOCK já está
+     * no manifest.
+     */
+    private fun wakeScreen() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE)
+                as android.os.PowerManager
+            @Suppress("DEPRECATION")
+            val wl = pm.newWakeLock(
+                android.os.PowerManager.FULL_WAKE_LOCK or
+                    android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    android.os.PowerManager.ON_AFTER_RELEASE,
+                "mfs:sos_wake"
+            )
+            // Solta sozinho após 15 s.
+            wl.acquire(15 * 1000L)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun playAlarmSound() {
