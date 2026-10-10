@@ -45,6 +45,7 @@ class LocationSharingService : Service() {
         private const val KEY_CHILD_ID = "child_id"
         private const val KEY_CHILD_NAME = "child_name"
         private const val KEY_GUARDIAN_ID = "guardian_id"
+        private const val KEY_GUARDIAN_IDS = "guardian_ids"
     }
 
     private val fused by lazy {
@@ -71,7 +72,7 @@ class LocationSharingService : Service() {
                 // Configuração via extras (primeira chamada vinda do Flutter).
                 val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 intent?.getStringExtra(KEY_CHILD_ID)?.let { childId ->
-                    prefs.edit()
+                    val editor = prefs.edit()
                         .putString(KEY_CHILD_ID, childId)
                         .putString(
                             KEY_CHILD_NAME,
@@ -81,7 +82,11 @@ class LocationSharingService : Service() {
                             KEY_GUARDIAN_ID,
                             intent.getStringExtra(KEY_GUARDIAN_ID) ?: ""
                         )
-                        .apply()
+                    // Multi-responsável: guarda a lista (pai e mãe).
+                    intent.getStringArrayExtra(KEY_GUARDIAN_IDS)?.let { gids ->
+                        editor.putStringSet(KEY_GUARDIAN_IDS, gids.toSet())
+                    }
+                    editor.apply()
                 }
                 startSharing()
             }
@@ -159,10 +164,16 @@ class LocationSharingService : Service() {
             val battery = (getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
                 .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
 
+            // Multi-responsável: inclui o array `guardianIds` para que
+            // todos os responsáveis (pai e mãe) recebam os alertas.
+            val gids = prefs.getStringSet(KEY_GUARDIAN_IDS, null)?.toList()
+                ?: listOf(guardianId).filter { it.isNotEmpty() }
+
             val data: HashMap<String, Any> = hashMapOf(
                 "childId" to childId,
                 "childName" to childName,
                 "guardianId" to guardianId,
+                "guardianIds" to gids,
                 "lat" to loc.latitude,
                 "lng" to loc.longitude,
                 "battery" to battery.toLong(),
@@ -205,5 +216,30 @@ class LocationSharingService : Service() {
             // Ignora.
         }
         super.onDestroy()
+    }
+
+    /**
+     * Se o usuário arrastar o app para fora dos recentes, o Android pode
+     * matar o serviço. Como a config está salva em SharedPreferences,
+     * tentamos reiniciar o compartilhamento imediatamente.
+     * (Medida de segurança: o filho não deve conseguir interromper o
+     * rastreamento fechando o app.)
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (!prefs.getString(KEY_CHILD_ID, null).isNullOrEmpty()) {
+            val restart = Intent(this, LocationSharingService::class.java)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(restart)
+                } else {
+                    startService(restart)
+                }
+            } catch (e: Exception) {
+                // Em segundo plano restrito, o sistema pode recusar;
+                // o START_STICKY ainda tenta recuperar.
+            }
+        }
+        super.onTaskRemoved(rootIntent)
     }
 }
