@@ -236,6 +236,12 @@ class AuthService {
             await _storage.upsertChild(child);
             await _storage.setRole('child');
             await _storage.setSessionChildId(child.id);
+            // Guarda o id do responsável neste aparelho para que o SOS
+            // e a localização periódica cheguem ao responsável certo.
+            final gid = data['guardianId'] as String?;
+            if (gid != null && gid.isNotEmpty) {
+              await _storage.setGuardianId(gid);
+            }
             // Uso único: apaga o código para não ser reutilizado.
             await doc.reference.delete();
             return (true, null);
