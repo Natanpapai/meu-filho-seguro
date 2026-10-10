@@ -5,7 +5,9 @@ import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:flutter/foundation.dart';
 import '../models/models.dart';
 import 'firebase_service.dart';
+import 'sos_alarm_service.dart';
 import 'storage_service.dart';
+import 'sync_service.dart';
 
 /// Cadastro, login e vinculação do responsável.
 ///
@@ -71,6 +73,8 @@ class AuthService {
     );
     await _storage.saveGuardian(g);
     await _storage.setRole('guardian');
+    // Liga a vigilância SOS em 2º plano (alarme mesmo com tela bloqueada).
+    _startSosWatch();
 
     // Guarda o perfil do responsável no Firestore para reconstruir
     // o login em outro aparelho se os dados locais forem apagados.
@@ -113,6 +117,8 @@ class AuthService {
           if (g != null) await _storage.saveGuardian(g);
         }
         await _storage.setRole('guardian');
+        // Liga a vigilância SOS em 2º plano.
+        _startSosWatch();
         return (true, null);
       } on fb_auth.FirebaseAuthException catch (e) {
         // Conta não existe no Firebase ou senha errada: tenta o modo local.
@@ -130,6 +136,8 @@ class AuthService {
       return (false, 'E-mail ou senha incorretos.');
     }
     await _storage.setRole('guardian');
+    // Liga a vigilância SOS em 2º plano.
+    _startSosWatch();
     return (true, null);
   }
 
@@ -190,6 +198,7 @@ class AuthService {
           'childName': child.name,
           'childNickname': child.nickname,
           'childBirthDate': child.birthDate.toIso8601String(),
+          'childGender': child.gender,
           'guardianId': guardian?.id,
           'guardianName': guardian?.name,
           'expiry': Timestamp.fromDate(expiry),
@@ -231,6 +240,7 @@ class AuthService {
               birthDate: DateTime.tryParse(
                       (data['childBirthDate'] as String?) ?? '') ??
                   DateTime.now(),
+              gender: (data['childGender'] as String?) ?? 'boy',
               paired: true,
             );
             await _storage.upsertChild(child);
@@ -241,6 +251,12 @@ class AuthService {
             final gid = data['guardianId'] as String?;
             if (gid != null && gid.isNotEmpty) {
               await _storage.setGuardianId(gid);
+              await _storage.setGuardianIds([gid]);
+            }
+            // Registra este responsável na lista de vinculados do filho
+            // (multi-responsável: pai e mãe recebem tudo).
+            if (gid != null && gid.isNotEmpty) {
+              await RemoteSync.addGuardianToChild(child.id, gid);
             }
             // Uso único: apaga o código para não ser reutilizado.
             await doc.reference.delete();
@@ -276,7 +292,71 @@ class AuthService {
     return (false, 'Código inválido ou expirado.');
   }
 
+  /// Vincula um SEGUNDO responsável ao mesmo filho (ex.: a mãe, quando
+  /// o pai já vinculou).
+  ///
+  /// O segundo responsável digita um código gerado pelo primeiro
+  /// responsável (mesmo fluxo de "Gerar código"). Em vez de criar um
+  /// perfil de filho, este método:
+  /// 1. adiciona o responsável à lista `child_guardians/{childId}`;
+  /// 2. cria o perfil do filho localmente neste aparelho (para ver
+  ///    localização e receber SOS);
+  /// 3. apaga o código (uso único).
+  Future<(bool, String?)> pairGuardianWithCode(String code) async {
+    final myGuardian = _storage.getGuardian();
+    if (myGuardian == null || myGuardian.id.isEmpty) {
+      return (false, 'Faça login como responsável primeiro.');
+    }
+    if (!_fb) {
+      return (false, 'Sem conexão. Ative a internet para vincular.');
+    }
+    final clean = code.trim();
+    try {
+      final doc = await FirebaseService.firestore
+          .collection('pair_codes')
+          .doc(clean)
+          .get();
+      final data = doc.data();
+      if (data == null) {
+        return (false, 'Código inválido ou expirado.');
+      }
+      final expiry = (data['expiry'] as Timestamp?)?.toDate();
+      if (expiry == null || !expiry.isAfter(DateTime.now())) {
+        try {
+          await doc.reference.delete();
+        } catch (_) {}
+        return (false, 'Código inválido ou expirado.');
+      }
+      final childId = (data['childId'] as String?) ?? clean;
+      // 1) Entra na lista de responsáveis do filho.
+      await RemoteSync.addGuardianToChild(childId, myGuardian.id);
+      // 2) Cria o perfil do filho neste aparelho.
+      final child = Child(
+        id: childId,
+        name: (data['childName'] as String?) ?? 'Filho(a)',
+        nickname: (data['childNickname'] as String?) ?? '',
+        birthDate:
+            DateTime.tryParse((data['childBirthDate'] as String?) ?? '') ??
+                DateTime.now(),
+        paired: true,
+      );
+      await _storage.upsertChild(child);
+      await _storage.setRole('guardian');
+      // 3) Uso único.
+      await doc.reference.delete();
+      return (true, null);
+    } catch (e) {
+      debugPrint('[Auth] vincular 2º responsável falhou: $e');
+      return (false, 'Não foi possível vincular. Tente de novo.');
+    }
+  }
+
   Future<void> logout() async {
+    // Para a vigilância SOS em 2º plano e o som do alarme.
+    try {
+      await SosAlarmService.stopWatch();
+    } catch (_) {}
+    SosAlarmService.reset();
     // Desloga do Firebase Auth também, se estiver disponível.
     if (_fb) {
       try {
@@ -284,5 +364,13 @@ class AuthService {
       } catch (_) {}
     }
     return _storage.clearSession();
+  }
+
+  /// Liga a vigilância SOS nativa (alarme mesmo com tela bloqueada).
+  void _startSosWatch() {
+    final g = _storage.getGuardian();
+    if (g != null && g.id.isNotEmpty) {
+      SosAlarmService.startWatch(g.id);
+    }
   }
 }
