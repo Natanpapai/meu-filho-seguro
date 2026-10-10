@@ -53,3 +53,9 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Cliente de localização do Google Play Services — usado pelo
+    // LocationSharingService (foreground service de rastreamento).
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+}
