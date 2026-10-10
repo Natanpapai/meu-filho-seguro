@@ -41,9 +41,40 @@ class EmergencyAlertActivity : Activity() {
     }
 
     private var vibrator: Vibrator? = null
+    private var closeReceiver: android.content.BroadcastReceiver? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Se o alerta for encerrado por outro caminho (ex.: "Marcar como
+        // visto" no popup do app), esta tela fecha TOTALMENTE — não fica
+        // em 2º plano nem volta ao desbloquear.
+        closeReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(
+                context: android.content.Context?,
+                intent: android.content.Intent?
+            ) {
+                dismissCompletely()
+            }
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(
+                    closeReceiver,
+                    android.content.IntentFilter(
+                        SosWatchService.ACTION_CLOSE_EMERGENCY
+                    ),
+                    android.content.Context.RECEIVER_NOT_EXPORTED
+                )
+            } else {
+                registerReceiver(
+                    closeReceiver,
+                    android.content.IntentFilter(
+                        SosWatchService.ACTION_CLOSE_EMERGENCY
+                    )
+                )
+            }
+        } catch (e: Exception) { }
 
         // Defesa Civil: aparece por cima da tela bloqueada e liga a tela.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -190,13 +221,43 @@ class EmergencyAlertActivity : Activity() {
         } catch (e: Exception) {
         }
 
-        // 4. Abre o app e fecha esta tela.
+        // 4. Fecha esta tela COMPLETAMENTE (some dos recentes e não
+        // volta ao desbloquear) e abre o app.
+        try {
+            sendBroadcast(
+                Intent(SosWatchService.ACTION_CLOSE_EMERGENCY)
+                    .setPackage(packageName)
+            )
+        } catch (e: Exception) { }
         val openApp = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         startActivity(openApp)
-        finish()
+        dismissCompletely()
+    }
+
+    /**
+     * Fecha a tela de emergência de verdade: para a vibração, remove
+     * das tarefas recentes e destrói a activity. Sem isso, a "imagem"
+     * do alerta ficava em 2º plano mesmo após atendida.
+     */
+    private fun dismissCompletely() {
+        stopVibration()
+        try {
+            closeReceiver?.let { unregisterReceiver(it) }
+        } catch (e: Exception) { }
+        closeReceiver = null
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                finishAndRemoveTask()
+            } else {
+                @Suppress("DEPRECATION")
+                finish()
+            }
+        } catch (e: Exception) {
+            try { finish() } catch (_: Exception) { }
+        }
     }
 
     /**
@@ -219,6 +280,10 @@ class EmergencyAlertActivity : Activity() {
     }
 
     override fun onDestroy() {
+        try {
+            closeReceiver?.let { unregisterReceiver(it) }
+        } catch (e: Exception) { }
+        closeReceiver = null
         stopVibration()
         super.onDestroy()
     }
