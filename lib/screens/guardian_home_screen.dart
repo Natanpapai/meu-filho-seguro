@@ -15,6 +15,7 @@ import 'map_tab.dart';
 import 'history_tab.dart';
 import 'settings_tab.dart';
 import 'pairing_screen.dart';
+import 'second_guardian_pairing_screen.dart';
 import 'safety_screen.dart';
 import '../widgets/connectivity_chip.dart';
 
@@ -169,6 +170,25 @@ class _HomeTab extends StatelessWidget {
                       textAlign: TextAlign.center,
                       style:
                           TextStyle(fontSize: 13, color: AppTheme.textMuted),
+                    ),
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => SecondGuardianPairingScreen(
+                                  deps: deps)),
+                        );
+                        onChanged();
+                      },
+                      icon: const Icon(Icons.family_restroom_outlined,
+                          size: 18),
+                      label: const Text('Vincular como 2º responsável'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 48),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
                     ),
                   ],
                 ),
