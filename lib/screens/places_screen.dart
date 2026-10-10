@@ -5,6 +5,18 @@ import '../theme.dart';
 
 /// Locais seguros: Casa e Escola, com raio configurável.
 /// O endereço é capturado do GPS atual (REAL) ou ajustado manualmente.
+/// Formata o raio: metros abaixo de 1000, km acima.
+String formatRadius(double meters) {
+  if (meters >= 1000) {
+    final km = meters / 1000;
+    final txt = km == km.roundToDouble()
+        ? km.toInt().toString()
+        : km.toStringAsFixed(1).replaceAll('.', ',');
+    return '$txt km';
+  }
+  return '${meters.toInt()} metros';
+}
+
 class PlacesScreen extends StatefulWidget {
   final AppDeps deps;
   const PlacesScreen({super.key, required this.deps});
@@ -47,6 +59,8 @@ class _PlacesScreenState extends State<PlacesScreen> {
 
   Future<void> _changeRadius(SafePlace place) async {
     double radius = place.radiusMeters;
+    final textController =
+        TextEditingController(text: radius.toInt().toString());
     final result = await showDialog<double>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -55,18 +69,47 @@ class _PlacesScreenState extends State<PlacesScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('${radius.toInt()} metros',
+              Text(formatRadius(radius),
                   style: const TextStyle(
                       fontSize: 20, fontWeight: FontWeight.bold)),
               Slider(
-                value: radius,
+                value: radius.clamp(50, 50000),
                 min: 50,
-                max: 500,
-                divisions: 9,
-                label: '${radius.toInt()} m',
-                onChanged: (v) => setState(() => radius = v),
+                max: 50000,
+                divisions: 50,
+                label: formatRadius(radius),
+                onChanged: (v) {
+                  setState(() {
+                    radius = v;
+                    textController.text = radius.toInt().toString();
+                  });
+                },
               ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: textController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Metros (digite qualquer valor)',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (t) {
+                        final v = double.tryParse(t.replaceAll(',', '.'));
+                        if (v != null && v >= 50) {
+                          setState(() => radius = v);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               const Text(
+                'Sem limite de distância: digite quantos metros quiser. '
                 'Quando seu filho entrar ou sair deste raio, você recebe o alerta.',
                 style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
               ),
@@ -85,6 +128,7 @@ class _PlacesScreenState extends State<PlacesScreen> {
         ),
       ),
     );
+    textController.dispose();
     if (result != null) {
       final places = widget.deps.storage.getPlaces();
       final i = places.indexWhere((p) => p.id == place.id);
@@ -190,7 +234,7 @@ class _PlaceCard extends StatelessWidget {
                       Text(
                         place == null
                             ? 'Não definido'
-                            : 'Raio de ${place!.radiusMeters.toInt()} m',
+                            : 'Raio de ${formatRadius(place!.radiusMeters)}',
                         style: const TextStyle(
                             fontSize: 13, color: AppTheme.textMuted),
                       ),
