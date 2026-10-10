@@ -97,6 +97,42 @@ class AuthService {
     return (true, null);
   }
 
+  /// Atualiza os dados do perfil do responsável (nome e telefone).
+  ///
+  /// Salva localmente e, se houver login via Firebase Auth, sincroniza
+  /// com o documento `guardians/{uid}` no Firestore (merge).
+  /// O e-mail não é editável aqui porque é a credencial de login.
+  Future<(bool, String?)> updateGuardianProfile({
+    required String name,
+    required String phone,
+  }) async {
+    final g = _storage.getGuardian();
+    if (g == null) return (false, 'Nenhuma conta encontrada.');
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) return (false, 'Informe o nome.');
+    final updated = g.copyWith(name: trimmedName, phone: phone.trim());
+    await _storage.saveGuardian(updated);
+    if (_fb) {
+      try {
+        final uid = fb_auth.FirebaseAuth.instance.currentUser?.uid;
+        if (uid != null) {
+          await FirebaseService.firestore
+              .collection('guardians')
+              .doc(uid)
+              .set({
+            'name': updated.name,
+            'phone': updated.phone,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
+      } catch (e) {
+        debugPrint('[Auth] atualizar perfil no Firestore falhou: $e');
+        // O dado local já foi salvo; não falha a operação.
+      }
+    }
+    return (true, null);
+  }
+
   Future<(bool, String?)> login({
     required String email,
     required String password,
@@ -342,6 +378,9 @@ class AuthService {
       );
       await _storage.upsertChild(child);
       await _storage.setRole('guardian');
+      // Liga a vigilância SOS em 2º plano para este responsável também
+      // (alarme mesmo com app fechado/tela bloqueada).
+      _startSosWatch();
       // 3) Uso único.
       await doc.reference.delete();
       return (true, null);
