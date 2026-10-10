@@ -27,6 +27,10 @@ void main() async {
       g != null &&
       g.id.isNotEmpty) {
     SosAlarmService.startWatch(g.id);
+    // Auto-cura: garante que o ID atual deste responsável esteja na
+    // lista de vinculados de cada filho (se o ID mudou, o SOS volta a
+    // chegar neste aparelho — antes ia só para o outro responsável).
+    deps.auth.ensureGuardianLinked();
   }
   runApp(MeuFilhoSeguroApp(deps: deps));
 }
