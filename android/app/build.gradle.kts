@@ -58,4 +58,8 @@ dependencies {
     // Cliente de localização do Google Play Services — usado pelo
     // LocationSharingService (foreground service de rastreamento).
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    // Firestore nativo — usado pelo LocationSharingService para enviar
+    // a posição direto ao Firebase (o plugin Flutter não expõe no classpath).
+    implementation(platform("com.google.firebase:firebase-bom:33.15.0"))
+    implementation("com.google.firebase:firebase-firestore")
 }
