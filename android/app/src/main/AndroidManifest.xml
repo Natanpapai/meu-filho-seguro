@@ -45,6 +45,12 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Serviço de rastreamento contínuo (estilo Uber): envia a posição
+             do filho ao Firestore a cada 15 segundos, mesmo em 2º plano. -->
+        <service
+            android:name=".LocationSharingService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
