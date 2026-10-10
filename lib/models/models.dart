@@ -310,3 +310,54 @@ class LocationEvent {
         lng: (j['lng'] as num?)?.toDouble(),
       );
 }
+
+/// Alerta SOS vindo do Firestore (coleção 'sos_alerts').
+///
+/// Enviado pelo celular do filho e lido em tempo real pelo responsável.
+/// Não é persistido no armazenamento local: a fonte da verdade é o
+/// Firestore, com fallback gracioso quando ele está indisponível.
+class SosAlert {
+  final String id;
+  final String childId;
+  final String childName;
+  final String guardianId;
+  final double? lat;
+  final double? lng;
+  final DateTime? timestamp;
+  final bool ack;
+
+  SosAlert({
+    required this.id,
+    required this.childId,
+    required this.childName,
+    required this.guardianId,
+    this.lat,
+    this.lng,
+    this.timestamp,
+    this.ack = false,
+  });
+
+  factory SosAlert.fromMap(String id, Map<String, dynamic> m) {
+    DateTime? ts;
+    final raw = m['timestamp'];
+    if (raw is DateTime) {
+      ts = raw;
+    } else if (raw != null) {
+      try {
+        ts = DateTime.parse(raw.toString());
+      } catch (_) {
+        ts = null;
+      }
+    }
+    return SosAlert(
+      id: id,
+      childId: (m['childId'] as String?) ?? '',
+      childName: (m['childName'] as String?) ?? '',
+      guardianId: (m['guardianId'] as String?) ?? '',
+      lat: (m['lat'] as num?)?.toDouble(),
+      lng: (m['lng'] as num?)?.toDouble(),
+      timestamp: ts,
+      ack: (m['ack'] as bool?) ?? false,
+    );
+  }
+}
