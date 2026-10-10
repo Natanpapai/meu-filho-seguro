@@ -8,6 +8,7 @@ import '../models/models.dart';
 import '../services/firebase_service.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
+import '../widgets/footprints.dart';
 
 /// Posição remota vinda do Firestore (celular do filho).
 class _RemoteLoc {
@@ -72,6 +73,23 @@ class _MapTabState extends State<MapTab> with TickerProviderStateMixin {
   /// Trajeto recente de cada filho (últimos pontos recebidos).
   final Map<String, List<LatLng>> _trails = {};
 
+  /// Cache de passinhos por filho: o trajeto só cresce durante a sessão,
+  /// então só reconstrói os marcadores quando a quantidade de pontos muda
+  /// (o mapa reconstrói a cada frame da animação de deslizamento).
+  final Map<String, List<Marker>> _footprintsCache = {};
+  final Map<String, int> _footprintsTrailLen = {};
+
+  List<Marker> _footprintsFor(String childId, List<LatLng> trail) {
+    final cached = _footprintsCache[childId];
+    if (cached != null && _footprintsTrailLen[childId] == trail.length) {
+      return cached;
+    }
+    final built = buildFootprintMarkers(trail);
+    _footprintsCache[childId] = built;
+    _footprintsTrailLen[childId] = trail.length;
+    return built;
+  }
+
   /// Animação de deslizamento do marcador de cada filho.
   final Map<String, AnimationController> _ctrls = {};
   final Map<String, Animation<LatLng>> _anims = {};
@@ -106,8 +124,12 @@ class _MapTabState extends State<MapTab> with TickerProviderStateMixin {
       if (dist(last, p) < 5) return;
     }
     trail.add(p);
-    // Mantém só os últimos 60 pontos do trajeto.
-    if (trail.length > 60) trail.removeAt(0);
+    // NÃO remove pontos antigos: o trajeto do dia inteiro fica visível
+    // no mapa (era o "sumiço" reportado). Só um teto de segurança bem
+    // alto para casos patológicos (5000 pontos ~= 5h de movimento).
+    if (trail.length > 5000) trail.removeAt(0);
+    // O trajeto mudou: invalida o cache de passinhos deste filho.
+    _footprintsCache.remove(childId);
   }
 
   /// Move suavemente o marcador do filho até o novo ponto.
@@ -222,6 +244,12 @@ class _MapTabState extends State<MapTab> with TickerProviderStateMixin {
     }
 
     final markers = <Marker>[];
+    // Passinhos do trajeto de cada filho (em vez da linha contínua):
+    // ficam por baixo do marcador do filho.
+    for (final entry in _trails.entries) {
+      if (entry.value.length < 2) continue;
+      markers.addAll(_footprintsFor(entry.key, entry.value));
+    }
     for (final p in positioned) {
       final name =
           p.child.nickname.isNotEmpty ? p.child.nickname : p.child.name;
@@ -301,19 +329,6 @@ class _MapTabState extends State<MapTab> with TickerProviderStateMixin {
       );
     }
 
-    // Linhas do trajeto recente de cada filho.
-    final polylines = <Polyline>[];
-    for (final entry in _trails.entries) {
-      if (entry.value.length < 2) continue;
-      polylines.add(
-        Polyline(
-          points: List.of(entry.value),
-          color: AppTheme.primary.withValues(alpha: 0.7),
-          strokeWidth: 4,
-        ),
-      );
-    }
-
     final circles = places
         .map(
           (pl) => CircleMarker(
@@ -342,8 +357,6 @@ class _MapTabState extends State<MapTab> with TickerProviderStateMixin {
               userAgentPackageName: 'com.meufilhoseguro.app',
             ),
             CircleLayer(circles: circles),
-            if (polylines.isNotEmpty)
-              PolylineLayer(polylines: polylines),
             MarkerLayer(markers: markers),
           ],
         ),
