@@ -28,6 +28,7 @@ class _AlarmSoundScreenState extends State<AlarmSoundScreen> {
   String? _previewingUri;
   bool _loading = true;
   bool _testing = false;
+  bool? _fullScreenGranted;
 
   @override
   void initState() {
@@ -38,12 +39,22 @@ class _AlarmSoundScreenState extends State<AlarmSoundScreen> {
   Future<void> _load() async {
     final sounds = await SosAlarmService.getAlarmSounds();
     final saved = await SosAlarmService.getSavedAlarmSound();
+    final fullScreen = await SosAlarmService.canUseFullScreenIntent();
     if (!mounted) return;
     setState(() {
       _sounds = sounds;
       _selectedUri = saved;
+      _fullScreenGranted = fullScreen;
       _loading = false;
     });
+  }
+
+  /// Re-verifica a permissão ao voltar das configurações do sistema.
+  Future<void> _openFullScreenSettings() async {
+    await SosAlarmService.openFullScreenIntentSettings();
+    await Future.delayed(const Duration(seconds: 1));
+    final fullScreen = await SosAlarmService.canUseFullScreenIntent();
+    if (mounted) setState(() => _fullScreenGranted = fullScreen);
   }
 
   /// Nome do som correspondente ao URI (para mostrar o atual).
@@ -146,6 +157,75 @@ class _AlarmSoundScreenState extends State<AlarmSoundScreen> {
                     ],
                   ),
                 ),
+                // Permissão de tela cheia: sem ela (Android 14+), a tela
+                // de emergência estilo Defesa Civil não abre por cima da
+                // tela bloqueada — o usuário precisa liberar no sistema.
+                Container(
+                  width: double.infinity,
+                  margin:
+                      const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: (_fullScreenGranted ?? true)
+                        ? AppTheme.primary.withValues(alpha: 0.1)
+                        : const Color(0xFFFFF3E0),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: (_fullScreenGranted ?? true)
+                          ? AppTheme.primary.withValues(alpha: 0.3)
+                          : const Color(0xFFFFB74D),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            (_fullScreenGranted ?? true)
+                                ? Icons.check_circle_outline
+                                : Icons.warning_amber_rounded,
+                            color: (_fullScreenGranted ?? true)
+                                ? AppTheme.primary
+                                : const Color(0xFFEF6C00),
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'Tela cheia de emergência',
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        (_fullScreenGranted ?? true)
+                            ? 'Liberado: o alerta SOS abre em tela cheia mesmo com o celular bloqueado.'
+                            : 'BLOQUEADO pelo sistema: o alerta SOS não vai abrir em tela cheia. Toque abaixo para liberar nas configurações do celular.',
+                        style: const TextStyle(
+                            fontSize: 13, color: AppTheme.textMuted),
+                      ),
+                      if (!(_fullScreenGranted ?? true)) ...[
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: _openFullScreenSettings,
+                            icon: const Icon(Icons.settings_outlined,
+                                size: 18),
+                            label: const Text(
+                                'Liberar nas configurações'),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
                 if (_sounds.isEmpty)
                   const Expanded(
                     child: Center(
