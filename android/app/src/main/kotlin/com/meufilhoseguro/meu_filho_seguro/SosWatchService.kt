@@ -37,6 +37,13 @@ class SosWatchService : Service() {
         const val ACTION_STOP = "com.meufilhoseguro.app.WATCH_STOP"
         const val ACTION_STOP_ALARM = "com.meufilhoseguro.app.WATCH_STOP_ALARM"
 
+        /**
+         * Broadcast enviado quando o alerta é encerrado (MARCAR COMO
+         * VISTO em qualquer lugar): a tela de emergência nativa e o
+         * alarme da MainActivity fecham/param — nada fica em 2º plano.
+         */
+        const val ACTION_CLOSE_EMERGENCY = "com.meufilhoseguro.app.CLOSE_EMERGENCY"
+
         private const val CHANNEL_ID = "sos_watch_channel"
         private const val ALERT_CHANNEL_ID = "sos_alert_channel"
         private const val NOTIF_ID = 1002
@@ -50,6 +57,7 @@ class SosWatchService : Service() {
 
         private const val PREFS = "mfs_sos_watch"
         private const val KEY_GUARDIAN_ID = "guardian_id"
+        private const val KEY_GUARDIAN_IDS = "guardian_ids"
         private const val SETTINGS_PREFS = "mfs_settings"
         private const val KEY_ALARM_SOUND = "alarm_sound_uri"
 
@@ -59,7 +67,7 @@ class SosWatchService : Service() {
             private set
     }
 
-    private var listener: ListenerRegistration? = null
+    private val listeners = mutableListOf<ListenerRegistration>()
     private var mediaPlayer: MediaPlayer? = null
     private val alarmedIds = mutableSetOf<String>()
     private var running = false
@@ -83,8 +91,14 @@ class SosWatchService : Service() {
         }
     }
 
-    /** GuardianId deste responsável (para filtrar os filhos dele). */
-    private var watchGuardianId: String? = null
+    /**
+     * IDs deste responsável (para filtrar os alertas dele).
+     * É um CONJUNTO porque o ID local pode mudar (ex.: reinstalou o app
+     * e o login reconstruiu o perfil com ID novo): mantemos os IDs
+     * antigos ouvindo também, até o Firestore ser atualizado — assim o
+     * alerta chega neste aparelho mesmo durante a transição.
+     */
+    private var watchGuardianIds: Set<String> = emptySet()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -96,6 +110,12 @@ class SosWatchService : Service() {
             }
             ACTION_STOP_ALARM -> {
                 stopAlarmSound()
+                // Fecha a tela de emergência nativa onde quer que esteja
+                // (aberta, em 2º plano ou na tela bloqueada) e manda a
+                // MainActivity parar o som dela também.
+                sendBroadcast(
+                    Intent(ACTION_CLOSE_EMERGENCY).setPackage(packageName)
+                )
                 return START_STICKY
             }
             else -> startWatch()
@@ -104,14 +124,29 @@ class SosWatchService : Service() {
     }
 
     private fun startWatch() {
-        if (running) return
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val guardianId = prefs.getString(KEY_GUARDIAN_ID, null)
         if (guardianId.isNullOrEmpty()) {
             stopSelf()
             return
         }
-        watchGuardianId = guardianId
+        // Acumula os IDs já vistos (o ID local pode mudar com o tempo).
+        val known = prefs.getStringSet(KEY_GUARDIAN_IDS, null)
+            ?.toMutableSet() ?: mutableSetOf()
+        known.add(guardianId)
+        prefs.edit().putStringSet(KEY_GUARDIAN_IDS, known).apply()
+
+        // Se já está rodando com o MESMO conjunto de IDs, nada a fazer.
+        // Se o conjunto mudou (ID novo), reanexa os listeners — antes o
+        // `if (running) return` mantinha o filtro do ID antigo para sempre.
+        if (running && watchGuardianIds == known) return
+        if (running) {
+            for (l in listeners) {
+                try { l.remove() } catch (e: Exception) { }
+            }
+            listeners.clear()
+        }
+        watchGuardianIds = known.toSet()
         running = true
 
         createChannels()
@@ -121,33 +156,43 @@ class SosWatchService : Service() {
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setOngoing(true)
             .build()
-        startForeground(NOTIF_ID, notification)
+        try {
+            startForeground(NOTIF_ID, notification)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
         // Ouve SOS deste responsável (filtro de ack feito no cliente para
         // não exigir índice composto no Firestore).
         // Usa o array `guardianIds` (não o campo único `guardianId`) para
         // que TODOS os responsáveis vinculados (pai e mãe) recebam o alerta.
-        listener = FirebaseFirestore.getInstance()
-            .collection("sos_alerts")
-            .whereArrayContains("guardianIds", guardianId)
-            .addSnapshotListener { snap, _ ->
-                if (snap == null) return@addSnapshotListener
-                for (doc in snap.documents) {
-                    val ack = doc.getBoolean("ack") ?: false
-                    if (ack) continue
-                    val id = doc.id
-                    if (!alarmedIds.add(id)) continue
-                    // Ignora alertas antigos (ex.: serviço reiniciado).
-                    val ts = doc.getTimestamp("timestamp")?.toDate()
-                    if (ts != null &&
-                        System.currentTimeMillis() - ts.time > 30 * 60 * 1000
-                    ) continue
-                    onSosAlert(
-                        id,
-                        doc.getString("childName") ?: "Seu filho"
-                    )
-                }
-            }
+        // Um listener por ID conhecido: cobre o período de transição em que
+        // o Firestore ainda tem o ID antigo (o `alarmedIds` evita duplicar).
+        val db = FirebaseFirestore.getInstance()
+        for (gid in watchGuardianIds) {
+            listeners.add(
+                db.collection("sos_alerts")
+                    .whereArrayContains("guardianIds", gid)
+                    .addSnapshotListener { snap, _ ->
+                        if (snap == null) return@addSnapshotListener
+                        for (doc in snap.documents) {
+                            val ack = doc.getBoolean("ack") ?: false
+                            if (ack) continue
+                            val id = doc.id
+                            if (!alarmedIds.add(id)) continue
+                            // Ignora alertas antigos (ex.: serviço reiniciado).
+                            val ts = doc.getTimestamp("timestamp")?.toDate()
+                            if (ts != null &&
+                                System.currentTimeMillis() - ts.time > 30 * 60 * 1000
+                            ) continue
+                            onSosAlert(
+                                id,
+                                doc.getString("childName") ?: "Seu filho"
+                            )
+                        }
+                    }
+            )
+        }
 
         // Verificação periódica de filho offline (mesmo com app fechado).
         offlineHandler.removeCallbacks(offlineCheck)
@@ -164,12 +209,19 @@ class SosWatchService : Service() {
      * parou — e o app mostra a última posição conhecida.
      */
     private fun checkOfflineChildren() {
-        val gid = watchGuardianId ?: return
+        val gids = watchGuardianIds
+        if (gids.isEmpty()) return
         val db = FirebaseFirestore.getInstance()
         // Junta as duas formas de vínculo (responsável principal e
-        // multi-responsável) sem exigir índice composto.
+        // multi-responsável) sem exigir índice composto. Consulta com
+        // todos os IDs conhecidos deste aparelho.
         val found = mutableMapOf<String, com.google.firebase.firestore.DocumentSnapshot>()
-        var pending = 2
+        val queries = mutableListOf<com.google.android.gms.tasks.Task<com.google.firebase.firestore.QuerySnapshot>>()
+        for (gid in gids) {
+            queries.add(db.collection("locations").whereEqualTo("guardianId", gid).get())
+            queries.add(db.collection("locations").whereArrayContains("guardianIds", gid).get())
+        }
+        var pending = queries.size
         fun maybeDone() {
             if (--pending != 0) return
             val now = System.currentTimeMillis()
@@ -193,22 +245,12 @@ class SosWatchService : Service() {
                 }
             }
         }
-        db.collection("locations")
-            .whereEqualTo("guardianId", gid)
-            .get()
-            .addOnSuccessListener { snap ->
+        for (q in queries) {
+            q.addOnSuccessListener { snap ->
                 for (d in snap.documents) found[d.id] = d
                 maybeDone()
-            }
-            .addOnFailureListener { maybeDone() }
-        db.collection("locations")
-            .whereArrayContains("guardianIds", gid)
-            .get()
-            .addOnSuccessListener { snap ->
-                for (d in snap.documents) found[d.id] = d
-                maybeDone()
-            }
-            .addOnFailureListener { maybeDone() }
+            }.addOnFailureListener { maybeDone() }
+        }
     }
 
     /**
@@ -270,9 +312,11 @@ class SosWatchService : Service() {
      * o próprio alarme (ver `SosAlarmService.triggerAlarm`).
      */
     private fun onSosAlert(id: String, childName: String) {
+        // Acorda a tela PRIMEIRO: a fullScreenIntent e a abertura direta
+        // funcionam melhor com a tela já acesa (principalmente bloqueada).
+        wakeScreen()
         playAlarmSound()
         showAlertNotification(id, childName)
-        wakeScreen()
         launchEmergencyScreenDirect(id, childName)
     }
 
@@ -309,15 +353,16 @@ class SosWatchService : Service() {
         try {
             val pm = getSystemService(Context.POWER_SERVICE)
                 as android.os.PowerManager
-            @Suppress("DEPRECATION")
+            // SCREEN_BRIGHT_WAKE_LOCK (não o depreciado FULL_WAKE_LOCK):
+            // acende a tela com brilho por cima do bloqueio.
             val wl = pm.newWakeLock(
-                android.os.PowerManager.FULL_WAKE_LOCK or
+                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
                     android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
                     android.os.PowerManager.ON_AFTER_RELEASE,
                 "mfs:sos_wake"
             )
-            // Solta sozinho após 15 s.
-            wl.acquire(15 * 1000L)
+            // Solta sozinho após 20 s.
+            wl.acquire(20 * 1000L)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -325,6 +370,15 @@ class SosWatchService : Service() {
 
     private fun playAlarmSound() {
         stopAlarmSound()
+        // Evita som duplo: se o app aberto (MainActivity) já está
+        // tocando o alarme via Flutter, o nativo não toca de novo.
+        // A tela de emergência e a notificação continuam normalmente.
+        try {
+            if (MainActivity.isAlarmPlaying) {
+                isAlarming = true
+                return
+            }
+        } catch (e: Exception) { }
         try {
             val audioManager =
                 getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -452,8 +506,10 @@ class SosWatchService : Service() {
     private fun stopWatch() {
         running = false
         offlineHandler.removeCallbacks(offlineCheck)
-        try { listener?.remove() } catch (e: Exception) { }
-        listener = null
+        for (l in listeners) {
+            try { l.remove() } catch (e: Exception) { }
+        }
+        listeners.clear()
         stopAlarmSound()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -467,7 +523,10 @@ class SosWatchService : Service() {
     override fun onDestroy() {
         running = false
         offlineHandler.removeCallbacks(offlineCheck)
-        try { listener?.remove() } catch (e: Exception) { }
+        for (l in listeners) {
+            try { l.remove() } catch (e: Exception) { }
+        }
+        listeners.clear()
         stopAlarmSound()
         super.onDestroy()
     }
