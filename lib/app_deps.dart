@@ -15,6 +15,10 @@ class AppDeps {
 
 /// Lógica de geofencing: detecta entrada/saída de casa e escola
 /// e registra os eventos no histórico.
+///
+/// [suppressRoutineEvents]: quando true (Modo Escola ativo), os eventos
+/// de rotina (chegou/saiu) NÃO são registrados — mas o status continua
+/// atualizando e o SOS segue funcionando normalmente.
 class Geofence {
   static Future<String> checkTransitions({
     required Child child,
@@ -22,6 +26,7 @@ class Geofence {
     required double lng,
     required List<SafePlace> places,
     required StorageService storage,
+    bool suppressRoutineEvents = false,
   }) async {
     String newStatus = 'a_caminho';
     for (final p in places) {
@@ -44,7 +49,7 @@ class Geofence {
       } else if (oldStatus == 'em_casa') {
         eventType = 'saiu_casa';
       }
-      if (eventType != null) {
+      if (eventType != null && !suppressRoutineEvents) {
         await storage.addEvent(LocationEvent.create(
           childId: child.id,
           childName: child.name,
