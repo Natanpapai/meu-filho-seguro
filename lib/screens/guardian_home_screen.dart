@@ -147,6 +147,7 @@ class _HomeTab extends StatelessWidget {
           _SosBanner(deps: deps),
           _RouteBanner(deps: deps),
           _BatteryBanner(deps: deps),
+          _OfflineBanner(deps: deps),
           if (children.isEmpty)
             Card(
               child: Padding(
@@ -548,6 +549,136 @@ class _BatteryBanner extends StatelessWidget {
   }
 }
 
+/// Banner de filho OFFLINE: sem localização há mais de 5 minutos.
+///
+/// O filho pode estar com o celular desligado, sem internet ou com o app
+/// morto pelo sistema. É impossível rastrear um celular desligado — o que
+/// o responsável vê aqui é a ÚLTIMA posição conhecida, com o tempo desde
+/// a última atualização. O banner some sozinho quando o filho voltar a
+/// enviar a localização.
+class _OfflineBanner extends StatefulWidget {
+  final AppDeps deps;
+  const _OfflineBanner({required this.deps});
+
+  @override
+  State<_OfflineBanner> createState() => _OfflineBannerState();
+}
+
+class _OfflineBannerState extends State<_OfflineBanner> {
+  Timer? _timer;
+
+  /// Limite para considerar o filho offline.
+  static const _offlineAfter = Duration(minutes: 5);
+
+  @override
+  void initState() {
+    super.initState();
+    // Atualiza o "há X min" periodicamente (sem novos dados, o
+    // StreamBuilder não reconstruiria sozinho).
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  String _offlineFor(DateTime updatedAt) {
+    final diff = DateTime.now().difference(updatedAt);
+    if (diff.inMinutes < 60) return 'há ${diff.inMinutes} min';
+    final h = diff.inHours;
+    final m = diff.inMinutes % 60;
+    return m == 0 ? 'há $h h' : 'há $h h $m min';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!FirebaseService.available) return const SizedBox.shrink();
+    final children = widget.deps.storage.getChildren();
+    if (children.isEmpty) return const SizedBox.shrink();
+    final ids = children.map((c) => c.id).toList();
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: RemoteSync.locationsStream(ids),
+      builder: (context, snap) {
+        final offline = <String, DateTime>{}; // childId -> updatedAt
+        final now = DateTime.now();
+        for (final d in snap.data?.docs ?? const []) {
+          final m = d.data();
+          final ts = m['updatedAt'];
+          final updatedAt = ts is Timestamp ? ts.toDate() : null;
+          // Sem nenhum dado de localização, não há "última posição":
+          // não mostra o banner (o card já indica "Sem dados").
+          if (updatedAt == null) continue;
+          if (now.difference(updatedAt) >= _offlineAfter) {
+            offline[d.id] = updatedAt;
+          }
+        }
+        if (offline.isEmpty) return const SizedBox.shrink();
+        final names = offline.keys.map((id) {
+          Child? found;
+          for (final x in children) {
+            if (x.id == id) {
+              found = x;
+              break;
+            }
+          }
+          final name = (found != null && found.nickname.isNotEmpty)
+              ? found.nickname
+              : (found?.name ?? 'Seu filho');
+          return '$name (${_offlineFor(offline[id]!)})';
+        }).join(', ');
+        return Column(
+          children: [
+            Card(
+              color: const Color(0xFFC62828),
+              margin: const EdgeInsets.only(bottom: 8),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    const Icon(Icons.signal_wifi_off,
+                        color: Colors.white, size: 30),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'FILHO OFFLINE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                          Text(
+                            '⚠️ $names sem enviar localização. '
+                            'Pode ser celular desligado ou sem internet. '
+                            'O mapa mostra a última posição conhecida.',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        );
+      },
+    );
+  }
+}
+
 /// Card do filho com localização ao vivo: mescla os dados locais com
 /// a posição mais recente vinda do Firestore (celular do filho).
 class _LiveChildCard extends StatelessWidget {
@@ -634,6 +765,16 @@ class _LiveAgoState extends State<_LiveAgo> {
     super.dispose();
   }
 
+  /// Quando a última atualização tem mais de 5 minutos, o texto muda para
+  /// "Última localização há X" em tom de alerta: o filho pode estar
+  /// offline (celular desligado, sem internet) e o que se vê no mapa é
+  /// a última posição conhecida — não a posição atual.
+  bool get _isStale {
+    final dt = widget.updatedAt;
+    if (dt == null) return true;
+    return DateTime.now().difference(dt).inMinutes >= 5;
+  }
+
   String _ago() {
     final dt = widget.updatedAt;
     if (dt == null) return 'nunca';
@@ -646,12 +787,19 @@ class _LiveAgoState extends State<_LiveAgo> {
   Widget build(BuildContext context) {
     final lowBattery =
         widget.batteryLevel != null && widget.batteryLevel! < 20;
+    final stale = _isStale;
     return RichText(
       text: TextSpan(
         style:
             const TextStyle(fontSize: 11, color: AppTheme.textMuted),
         children: [
-          TextSpan(text: 'Atualizado ${_ago()}'),
+          TextSpan(
+            text: stale ? 'Última localização ${_ago()}' : 'Atualizado ${_ago()}',
+            style: TextStyle(
+              color: stale ? Colors.orange.shade800 : null,
+              fontWeight: stale ? FontWeight.bold : null,
+            ),
+          ),
           if (widget.batteryLevel != null)
             TextSpan(
               text: ' • Bateria ${widget.batteryLevel}%',
