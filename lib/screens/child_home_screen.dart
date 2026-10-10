@@ -8,6 +8,7 @@ import '../services/history_service.dart';
 import '../services/sharing_service.dart';
 import '../services/sync_service.dart';
 import '../theme.dart';
+import 'profile_screen.dart';
 import 'welcome_screen.dart';
 
 /// Tela principal do filho(a).
@@ -358,6 +359,16 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
       appBar: AppBar(
         title: const Text('Meu Filho Seguro'),
         actions: [
+          IconButton(
+            tooltip: 'Meus Dados',
+            icon: const Icon(Icons.person_outline),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                    builder: (_) => ProfileScreen(deps: widget.deps)),
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Sair',
             icon: const Icon(Icons.logout),
