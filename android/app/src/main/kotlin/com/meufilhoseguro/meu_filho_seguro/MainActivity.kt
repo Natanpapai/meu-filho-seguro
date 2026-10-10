@@ -13,11 +13,53 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    companion object {
+        /**
+         * Verdadeiro enquanto a MainActivity estiver tocando o alarme
+         * (via Flutter). O serviço de vigilância consulta para não
+         * duplicar o som quando o app está aberto.
+         */
+        @Volatile
+        var isAlarmPlaying: Boolean = false
+    }
+
     private val ALARM_CHANNEL = "com.meufilhoseguro.app/sos_alarm"
     private val SHARING_CHANNEL = "com.meufilhoseguro.app/sharing"
     private val SETTINGS_PREFS = "mfs_settings"
     private val KEY_ALARM_SOUND = "alarm_sound_uri"
     private var mediaPlayer: MediaPlayer? = null
+    private var closeReceiver: android.content.BroadcastReceiver? = null
+
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Quando o alerta é encerrado em qualquer lugar (MARCAR COMO
+        // VISTO), para o som daqui também — nada fica tocando/visível
+        // em 2º plano.
+        closeReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                // Só o som local, SEM rebroadcast (evita loop).
+                stopLocalAlarm()
+            }
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(
+                    closeReceiver,
+                    android.content.IntentFilter(
+                        SosWatchService.ACTION_CLOSE_EMERGENCY
+                    ),
+                    Context.RECEIVER_NOT_EXPORTED
+                )
+            } else {
+                registerReceiver(
+                    closeReceiver,
+                    android.content.IntentFilter(
+                        SosWatchService.ACTION_CLOSE_EMERGENCY
+                    )
+                )
+            }
+        } catch (e: Exception) { }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -52,8 +94,16 @@ class MainActivity : FlutterActivity() {
                     }
                     "startWatch" -> {
                         val gid = call.argument<String>("guardianId") ?: ""
-                        getSharedPreferences("mfs_sos_watch", Context.MODE_PRIVATE)
-                            .edit().putString("guardian_id", gid).apply()
+                        val prefs = getSharedPreferences("mfs_sos_watch", Context.MODE_PRIVATE)
+                        prefs.edit().putString("guardian_id", gid).apply()
+                        // Acumula os IDs (o ID local pode mudar com o tempo):
+                        // o serviço ouve todos, sem quebrar o atual.
+                        if (gid.isNotEmpty()) {
+                            val set = prefs.getStringSet("guardian_ids", null)
+                                ?.toMutableSet() ?: mutableSetOf()
+                            set.add(gid)
+                            prefs.edit().putStringSet("guardian_ids", set).apply()
+                        }
                         val intent = Intent(this, SosWatchService::class.java)
                             .setAction(SosWatchService.ACTION_START)
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -192,6 +242,10 @@ class MainActivity : FlutterActivity() {
      */
     private fun playAlarm(soundUri: String? = null) {
         stopAlarm()
+        // Evita som duplo: o serviço de vigilância já está tocando.
+        try {
+            if (SosWatchService.isAlarming) return
+        } catch (e: Exception) { }
         try {
             val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             // Volume máximo no canal de alarme para garantir que seja ouvido.
@@ -221,6 +275,7 @@ class MainActivity : FlutterActivity() {
                 prepare()
                 start()
             }
+            isAlarmPlaying = true
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -319,7 +374,8 @@ class MainActivity : FlutterActivity() {
         return out
     }
 
-    private fun stopAlarm() {
+    /** Para só o MediaPlayer local, sem rebroadcast (uso interno). */
+    private fun stopLocalAlarm() {
         try {
             mediaPlayer?.stop()
         } catch (e: Exception) {
@@ -331,6 +387,11 @@ class MainActivity : FlutterActivity() {
             // já liberado
         }
         mediaPlayer = null
+        isAlarmPlaying = false
+    }
+
+    private fun stopAlarm() {
+        stopLocalAlarm()
         // Também para o alarme do serviço de vigilância, se estiver tocando.
         try {
             val intent = Intent(this, SosWatchService::class.java)
@@ -339,9 +400,21 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             // Serviço pode não existir ainda.
         }
+        // Fecha a tela de emergência nativa onde quer que esteja
+        // (aberta, em 2º plano ou na tela bloqueada): nada fica para trás.
+        try {
+            sendBroadcast(
+                Intent(SosWatchService.ACTION_CLOSE_EMERGENCY)
+                    .setPackage(packageName)
+            )
+        } catch (e: Exception) { }
     }
 
     override fun onDestroy() {
+        try {
+            closeReceiver?.let { unregisterReceiver(it) }
+        } catch (e: Exception) { }
+        closeReceiver = null
         stopAlarm()
         super.onDestroy()
     }
