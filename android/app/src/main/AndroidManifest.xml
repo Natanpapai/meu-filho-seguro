@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Alarme SOS: popup full-screen na tela bloqueada + som que fura o silencioso/DND -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
@@ -51,6 +52,12 @@
             android:name=".LocationSharingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+        <!-- Serviço de vigilância SOS: ouve alertas no Firestore e toca o
+             alarme mesmo com o app fechado ou a tela bloqueada. -->
+        <service
+            android:name=".SosWatchService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
