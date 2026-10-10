@@ -6,8 +6,7 @@ plugins {
 
 android {
     namespace = "com.meufilhoseguro.meu_filho_seguro"
-    compileSdk = 35
-    buildToolsVersion = "35.0.0"
+    compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
