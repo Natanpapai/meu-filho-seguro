@@ -1,5 +1,8 @@
 plugins {
     id("com.android.application")
+    // Plugin do Google Services: lê android/app/google-services.json
+    // e injeta as credenciais do Firebase no app.
+    id("com.google.gms.google-services")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
