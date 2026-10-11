@@ -72,12 +72,12 @@ class _AlarmSoundScreenState extends State<AlarmSoundScreen> {
     // Para a pré-visualização após alguns segundos.
     await Future.delayed(const Duration(seconds: 4));
     if (!mounted) return;
-    await SosAlarmService.stopAlarm();
+    await SosAlarmService.stopPreview();
     if (mounted) setState(() => _previewingUri = null);
   }
 
   Future<void> _save() async {
-    await SosAlarmService.stopAlarm();
+    await SosAlarmService.stopPreview();
     await SosAlarmService.saveAlarmSound(_selectedUri);
     // Lê de volta para confirmar que persistiu.
     final saved = await SosAlarmService.getSavedAlarmSound();
@@ -99,7 +99,7 @@ class _AlarmSoundScreenState extends State<AlarmSoundScreen> {
 
   @override
   void dispose() {
-    SosAlarmService.stopAlarm();
+    SosAlarmService.stopPreview();
     super.dispose();
   }
 
@@ -272,7 +272,7 @@ class _AlarmSoundScreenState extends State<AlarmSoundScreen> {
                                 color: AppTheme.primary,
                               ),
                               onPressed: () => previewing
-                                  ? SosAlarmService.stopAlarm().then((_) {
+                                  ? SosAlarmService.stopPreview().then((_) {
                                       if (mounted) {
                                         setState(
                                             () => _previewingUri = null);
