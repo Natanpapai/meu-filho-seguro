@@ -75,6 +75,15 @@ class SosAlarmService {
     } catch (_) {}
   }
 
+  /// Para a pré-visualização do som (só o player local, sem os efeitos
+  /// colaterais do stopAlarm — que acorda o serviço de vigilância e
+  /// transmite o broadcast de fechar emergência).
+  static Future<void> stopPreview() async {
+    try {
+      await _channel.invokeMethod('stopPreview');
+    } catch (_) {}
+  }
+
   /// Salva o som escolhido pelo responsável.
   static Future<void> saveAlarmSound(String uri) async {
     try {
