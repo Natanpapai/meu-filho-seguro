@@ -318,6 +318,17 @@ class SosWatchService : Service() {
         playAlarmSound()
         showAlertNotification(id, childName)
         launchEmergencyScreenDirect(id, childName)
+        // CORREÇÃO (bug "não aparece com tela bloqueada"): tenta de novo
+        // após 1,5 s. Na primeira tentativa a tela pode ainda estar
+        // apagando/acordando e o sistema bloqueia a abertura ("Background
+        // activity start blocked"); com a tela já acesa pelo WakeLock, a
+        // segunda tentativa tem chance muito maior em vários aparelhos.
+        // Se a primeira já abriu, o singleTop só atualiza o intent.
+        Handler(Looper.getMainLooper()).postDelayed({
+            try {
+                launchEmergencyScreenDirect(id, childName)
+            } catch (e: Exception) { }
+        }, 1500)
     }
 
     /**
@@ -332,9 +343,13 @@ class SosWatchService : Service() {
         try {
             val intent =
                 Intent(this, EmergencyAlertActivity::class.java).apply {
+                    // NEW_TASK + CLEAR_TASK: a tela de emergência vira a
+                    // raiz de uma tarefa nova e vem para a frente, por cima
+                    // de qualquer coisa (inclusive da tela bloqueada, junto
+                    // com showWhenLocked/turnScreenOn da activity).
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra(EmergencyAlertActivity.EXTRA_ALERT_ID, id)
                     putExtra(EmergencyAlertActivity.EXTRA_CHILD_NAME, childName)
                 }
