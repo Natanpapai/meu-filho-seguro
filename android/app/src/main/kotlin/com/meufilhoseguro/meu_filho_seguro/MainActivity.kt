@@ -81,6 +81,13 @@ class MainActivity : FlutterActivity() {
                         previewAlarm(call.argument<String>("uri"))
                         result.success(null)
                     }
+                    "stopPreview" -> {
+                        // Para só a pré-visualização local, sem os efeitos
+                        // colaterais do stopAlarm (que acorda o serviço e
+                        // transmite CLOSE_EMERGENCY).
+                        stopLocalAlarm()
+                        result.success(null)
+                    }
                     "saveAlarmSound" -> {
                         val uri = call.argument<String>("uri") ?: ""
                         getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
@@ -285,9 +292,16 @@ class MainActivity : FlutterActivity() {
      * Toca o som UMA vez (sem loop) para pré-visualização na tela de
      * configuração. Não mexe no volume do sistema.
      * Se [uri] for vazio, usa o alarme padrão do sistema.
+     *
+     * CORREÇÃO (bug "fica mudo ao escolher"): usa [stopLocalAlarm] e NÃO
+     * [stopAlarm]. O [stopAlarm] envia o broadcast ACTION_CLOSE_EMERGENCY,
+     * que a própria MainActivity recebe e trata chamando [stopLocalAlarm]
+     * — como o broadcast é assíncrono, ele chegava DEPOIS do preview ter
+     * começado e matava o MediaPlayer recém-criado (race condition).
+     * Resultado: o usuário tocava para ouvir e não saía som nenhum.
      */
     private fun previewAlarm(uri: String?) {
-        stopAlarm()
+        stopLocalAlarm()
         try {
             val attrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM)
