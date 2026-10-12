@@ -131,6 +131,31 @@ class MainActivity : FlutterActivity() {
                     "isWatchAlarming" -> {
                         result.success(SosWatchService.isAlarming)
                     }
+                    // v14 — teste de ponta a ponta do alerta: dispara o
+                    // caminho COMPLETO do SOS (tela + som + notificação)
+                    // sem precisar de um SOS real. O dono usa para validar
+                    // o comportamento com a tela bloqueada.
+                    "testEmergencyAlert" -> {
+                        val name = call.argument<String>("childName")
+                            ?.takeIf { it.isNotBlank() } ?: "Seu filho"
+                        try {
+                            val intent =
+                                Intent(this, SosWatchService::class.java)
+                                    .setAction(
+                                        SosWatchService.ACTION_TEST_ALERT)
+                                    .putExtra(
+                                        SosWatchService.EXTRA_TEST_CHILD_NAME,
+                                        name)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                startForegroundService(intent)
+                            } else {
+                                startService(intent)
+                            }
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
                     // Android 14+: a permissão de notificações em tela
                     // cheia (USE_FULL_SCREEN_INTENT) precisa ser liberada
                     // pelo usuário nas configurações do sistema — sem
@@ -429,7 +454,15 @@ class MainActivity : FlutterActivity() {
             closeReceiver?.let { unregisterReceiver(it) }
         } catch (e: Exception) { }
         closeReceiver = null
-        stopAlarm()
+        // v14 — CORREÇÃO do "tela de emergência some sozinha": antes o
+        // onDestroy chamava stopAlarm(), que parava o alarme DO SERVIÇO
+        // e transmitia CLOSE_EMERGENCY. Como a abertura da tela de
+        // emergência destruía a MainActivity (CLEAR_TASK), o próprio app
+        // matava o alarme e fechava a tela recém-aberta. Agora o onDestroy
+        // para SÓ o player local: o alarme do serviço continua até o
+        // "MARCAR COMO VISTO" (comportamento correto p/ um app de
+        // emergência), e a tela de emergência não é mais fechada por aqui.
+        stopLocalAlarm()
         super.onDestroy()
     }
 }
