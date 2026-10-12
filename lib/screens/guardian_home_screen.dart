@@ -146,6 +146,7 @@ class _HomeTab extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           _SosBanner(deps: deps),
+          _FullScreenAlertBanner(deps: deps),
           _RouteBanner(deps: deps),
           _BatteryBanner(deps: deps),
           _OfflineBanner(deps: deps),
@@ -390,9 +391,111 @@ class _SosCard extends StatelessWidget {
   }
 }
 
-/// Banner de alerta de desvio de rota (via Firestore).
-class _RouteBanner extends StatelessWidget {
+/// Banner de permissão de tela cheia (v14).
+///
+/// No Android 14+, o sistema BLOQUEIA o alerta SOS em tela cheia por
+/// cima da tela bloqueada a menos que o usuário libere "alertas em
+/// tela cheia" nas configurações — sem isso, com a tela bloqueada só
+/// o SOM toca (o problema reportado pelo dono). Este banner aparece
+/// no topo da aba Filhos enquanto a permissão não estiver liberada,
+/// com botão direto para as configurações do sistema.
+class _FullScreenAlertBanner extends StatefulWidget {
   final AppDeps deps;
+  const _FullScreenAlertBanner({required this.deps});
+
+  @override
+  State<_FullScreenAlertBanner> createState() =>
+      _FullScreenAlertBannerState();
+}
+
+class _FullScreenAlertBannerState extends State<_FullScreenAlertBanner> {
+  bool? _granted;
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  Future<void> _check() async {
+    final ok = await SosAlarmService.canUseFullScreenIntent();
+    if (mounted) setState(() => _granted = ok);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Ainda verificando ou já liberado: não mostra nada.
+    if (_granted ?? true) return const SizedBox.shrink();
+    return Column(
+      children: [
+        Card(
+          color: const Color(0xFFFFF3E0),
+          margin: const EdgeInsets.only(bottom: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFFFFB74D), width: 1.5),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded,
+                        color: Color(0xFFEF6C00), size: 28),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'ALERTA EM TELA CHEIA BLOQUEADO',
+                        style: TextStyle(
+                          color: Color(0xFFE65100),
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'O celular está bloqueando a tela vermelha de emergência. '
+                  'Com a tela bloqueada, o SOS vai tocar SÓ o som — você '
+                  'não vai ver o alerta. Libere nas configurações:',
+                  style:
+                      TextStyle(fontSize: 13, color: AppTheme.textMuted),
+                ),
+                const SizedBox(height: 10),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFEF6C00),
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () async {
+                    await SosAlarmService
+                        .openFullScreenIntentSettings();
+                    // Re-verifica ao voltar das configurações.
+                    await Future.delayed(
+                        const Duration(seconds: 1));
+                    _check();
+                  },
+                  icon: const Icon(Icons.settings_outlined, size: 18),
+                  label:
+                      const Text('Liberar nas configurações do celular'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+
+/// Banner de alerta de desvio de rota (via Firestore).
+class _RouteBanner extends StatelessWidget {  final AppDeps deps;
   const _RouteBanner({required this.deps});
 
   @override
