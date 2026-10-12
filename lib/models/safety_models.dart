@@ -1,6 +1,25 @@
 // Modelos das funcionalidades de segurança avançada.
 // Arquivo separado de models.dart para não conflitar com outras
 // edições em andamento naquele arquivo.
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+/// Converte o campo 'timestamp' do Firestore para [DateTime].
+///
+/// CORREÇÃO (v14): antes este parse tentava `DateTime.parse()` no
+/// `toString()` de um `Timestamp` do Firestore
+/// ("Timestamp(seconds=..., nanoseconds=...)"), o que SEMPRE falhava —
+/// o timestamp vinha nulo e os pontos do trajeto eram descartados,
+/// deixando o histórico do dia permanentemente vazio.
+DateTime? parseFirestoreTimestamp(dynamic raw) {
+  if (raw == null) return null;
+  if (raw is DateTime) return raw;
+  if (raw is Timestamp) return raw.toDate();
+  try {
+    return DateTime.parse(raw.toString());
+  } catch (_) {
+    return null;
+  }
+}
 
 /// Ponto geográfico simples (latitude/longitude).
 class RoutePoint {
@@ -153,17 +172,7 @@ class RouteAlert {
   });
 
   factory RouteAlert.fromMap(String id, Map<String, dynamic> m) {
-    DateTime? ts;
-    final raw = m['timestamp'];
-    if (raw is DateTime) {
-      ts = raw;
-    } else if (raw != null) {
-      try {
-        ts = DateTime.parse(raw.toString());
-      } catch (_) {
-        ts = null;
-      }
-    }
+    final ts = parseFirestoreTimestamp(m['timestamp']);
     final gids = m['guardianIds'];
     return RouteAlert(
       id: id,
@@ -191,21 +200,10 @@ class HistoryPoint {
   HistoryPoint({required this.lat, required this.lng, this.timestamp, this.battery});
 
   factory HistoryPoint.fromMap(Map<String, dynamic> m) {
-    DateTime? ts;
-    final raw = m['timestamp'];
-    if (raw is DateTime) {
-      ts = raw;
-    } else if (raw != null) {
-      try {
-        ts = DateTime.parse(raw.toString());
-      } catch (_) {
-        ts = null;
-      }
-    }
     return HistoryPoint(
       lat: (m['lat'] as num?)?.toDouble() ?? 0,
       lng: (m['lng'] as num?)?.toDouble() ?? 0,
-      timestamp: ts,
+      timestamp: parseFirestoreTimestamp(m['timestamp']),
       battery: (m['battery'] as num?)?.toInt(),
     );
   }
