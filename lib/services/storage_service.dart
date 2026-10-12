@@ -62,7 +62,18 @@ class StorageService {
   Guardian? getGuardian() {
     final raw = _prefs.getString(_kGuardian);
     if (raw == null) return null;
-    return Guardian.fromJson(jsonDecode(raw));
+    try {
+      final g = Guardian.fromJson(jsonDecode(raw));
+      // Perfil sem id é inválido (nunca deve acontecer, mas se os dados
+      // corromperem o app não pode entrar em loop de crash no arranque).
+      if (g.id.isEmpty) return null;
+      return g;
+    } catch (_) {
+      // JSON corrompido (ex.: escrita interrompida por crash): trata como
+      // sessão ausente em vez de derrubar o app. A validação da sessão
+      // no main() limpa esse estado de forma deliberada.
+      return null;
+    }
   }
 
   // ---- Filhos ----
@@ -71,8 +82,12 @@ class StorageService {
   List<Child> getChildren() {
     final raw = _prefs.getString(_kChildren);
     if (raw == null) return [];
-    final list = jsonDecode(raw) as List;
-    return list.map((e) => Child.fromJson(e)).toList();
+    try {
+      final list = jsonDecode(raw) as List;
+      return list.map((e) => Child.fromJson(e)).toList();
+    } catch (_) {
+      return [];
+    }
   }
 
   Future<void> upsertChild(Child child) async {
@@ -97,8 +112,12 @@ class StorageService {
   List<SafePlace> getPlaces() {
     final raw = _prefs.getString(_kPlaces);
     if (raw == null) return [];
-    final list = jsonDecode(raw) as List;
-    return list.map((e) => SafePlace.fromJson(e)).toList();
+    try {
+      final list = jsonDecode(raw) as List;
+      return list.map((e) => SafePlace.fromJson(e)).toList();
+    } catch (_) {
+      return [];
+    }
   }
 
   // ---- Eventos ----
@@ -113,8 +132,12 @@ class StorageService {
   List<LocationEvent> getEvents() {
     final raw = _prefs.getString(_kEvents);
     if (raw == null) return [];
-    final list = jsonDecode(raw) as List;
-    return list.map((e) => LocationEvent.fromJson(e)).toList();
+    try {
+      final list = jsonDecode(raw) as List;
+      return list.map((e) => LocationEvent.fromJson(e)).toList();
+    } catch (_) {
+      return [];
+    }
   }
 
   List<LocationEvent> getEventsForChild(String childId) =>
