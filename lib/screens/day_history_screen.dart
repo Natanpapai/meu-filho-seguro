@@ -6,13 +6,18 @@ import '../models/models.dart';
 import '../models/safety_models.dart';
 import '../services/firebase_service.dart';
 import '../services/history_service.dart';
+import '../services/trail_service.dart';
 import '../theme.dart';
 import '../widgets/footprints.dart';
 
 /// Trajeto do dia: por onde o filho passou, com horários.
 ///
-/// Usa os pontos amostrados a cada ~2 min em `history/{childId}/points`.
-/// Sem Firebase/rede, mostra os eventos locais do dia como alternativa.
+/// v14 — os passinhos ficam marcados de forma PERMANENTE:
+/// - pontos do Firestore (amostrados pelo app do filho a cada ~2 min);
+/// - pontos locais gravados neste aparelho pelo mapa do responsável
+///   (a cada atualização de posição com movimento real).
+/// Os dois são mesclados (sem duplicados) — o trajeto não some ao
+/// recarregar o app, trocar de dia ou ficar sem internet.
 class DayHistoryScreen extends StatefulWidget {
   final AppDeps deps;
   const DayHistoryScreen({super.key, required this.deps});
@@ -41,11 +46,18 @@ class _DayHistoryScreenState extends State<DayHistoryScreen> {
       _loading = true;
       _points = null;
     });
-    final pts =
+    // v14: mescla os pontos do Firestore com os pontos locais gravados
+    // neste aparelho (passinhos permanentes). O parse do timestamp do
+    // Firestore foi corrigido (antes vinha sempre nulo e a lista ficava
+    // vazia — o "histórico não marcava os passinhos").
+    final remote =
         await HistoryService.pointsOfDay(_child!.id, _date);
+    final local = TrailService.pointsOfDay(
+        widget.deps.storage, _child!.id, _date);
+    final merged = TrailService.merge(remote, local);
     if (mounted) {
       setState(() {
-        _points = pts;
+        _points = merged;
         _loading = false;
       });
     }
@@ -242,11 +254,13 @@ class _DayHistoryScreenState extends State<DayHistoryScreen> {
                   const Icon(Icons.info_outline,
                       size: 16, color: AppTheme.textMuted),
                   const SizedBox(width: 6),
-                  Text(
-                    '${_points!.length} pontos registrados',
-                    style: const TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.textMuted),
+                  Expanded(
+                    child: Text(
+                      '${_points!.length} pontos registrados • salvos neste aparelho',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.textMuted),
+                    ),
                   ),
                 ],
               ),
