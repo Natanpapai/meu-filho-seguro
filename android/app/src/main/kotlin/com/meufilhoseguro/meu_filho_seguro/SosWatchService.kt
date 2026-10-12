@@ -38,6 +38,15 @@ class SosWatchService : Service() {
         const val ACTION_STOP_ALARM = "com.meufilhoseguro.app.WATCH_STOP_ALARM"
 
         /**
+         * Ação de TESTE (v14): dispara o caminho COMPLETO do alerta
+         * (tela + som + notificação) sem precisar de um SOS real no
+         * Firestore. Serve para o dono validar o comportamento com a
+         * tela bloqueada. O "MARCAR COMO VISTO" encerra normalmente.
+         */
+        const val ACTION_TEST_ALERT = "com.meufilhoseguro.app.WATCH_TEST_ALERT"
+        const val EXTRA_TEST_CHILD_NAME = "test_child_name"
+
+        /**
          * Broadcast enviado quando o alerta é encerrado (MARCAR COMO
          * VISTO em qualquer lugar): a tela de emergência nativa e o
          * alarme da MainActivity fecham/param — nada fica em 2º plano.
@@ -118,6 +127,16 @@ class SosWatchService : Service() {
                 )
                 return START_STICKY
             }
+            ACTION_TEST_ALERT -> {
+                // Teste de ponta a ponta pedido pelo dono: passa pelo
+                // MESMO caminho de um SOS real (tela + som + notificação).
+                val name = intent.getStringExtra(EXTRA_TEST_CHILD_NAME)
+                    ?.takeIf { it.isNotBlank() } ?: "Seu filho"
+                // Garante que o serviço está em primeiro plano antes.
+                startWatch()
+                onSosAlert("test_${System.currentTimeMillis()}", name)
+                return START_STICKY
+            }
             else -> startWatch()
         }
         return START_STICKY
@@ -159,7 +178,12 @@ class SosWatchService : Service() {
         try {
             startForeground(NOTIF_ID, notification)
         } catch (e: Exception) {
+            // Android 12+: se o serviço foi iniciado em 2º plano e o
+            // sistema recusar o foreground, não adianta seguir como
+            // "zumbi" — o SO vai matar o serviço de qualquer jeito.
             e.printStackTrace()
+            stopSelf()
+            return
         }
 
         // Ouve SOS deste responsável (filtro de ack feito no cliente para
@@ -302,11 +326,20 @@ class SosWatchService : Service() {
      * bloqueada, sem nenhuma barreira.
      *
      * Estratégia em 3 camadas (a primeira que funcionar vence):
-     * 1. Notificação com fullScreenIntent (caminho oficial do Android).
-     * 2. Abertura DIRETA da EmergencyAlertActivity (fallback para quando
-     *    o fullScreenIntent é bloqueado — ex. Android 14+ sem a permissão
-     *    "usar intenção de tela cheia" liberada pelo usuário).
+     * 1. Notificação com fullScreenIntent (caminho OFICIAL do Android —
+     *    o único que funciona com a tela bloqueada no Android 10+).
+     *    No Android 14+ exige a permissão "alertas em tela cheia"
+     *    liberada pelo usuário nas configurações (o app orienta).
+     * 2. Abertura DIRETA da EmergencyAlertActivity (fallback para
+     *    Android < 10 e para casos em que o fullScreenIntent é
+     *    ignorado). Em Android 10+ o sistema pode bloquear a abertura
+     *    vinda de 2º plano — por isso o try/catch: melhor esforço.
      * 3. WakeLock breve para acender a tela.
+     *
+     * v14 — ordem refeita: a notificação (camada oficial) é postada
+     * ANTES da abertura direta, e o som toca depois dela. Antes, o
+     * `MediaPlayer.prepare()` (síncrono, na thread principal) atrasava
+     * a postagem da notificação.
      *
      * O som não duplica: o Flutter verifica `isAlarming` antes de tocar
      * o próprio alarme (ver `SosAlarmService.triggerAlarm`).
@@ -315,8 +348,11 @@ class SosWatchService : Service() {
         // Acorda a tela PRIMEIRO: a fullScreenIntent e a abertura direta
         // funcionam melhor com a tela já acesa (principalmente bloqueada).
         wakeScreen()
-        playAlarmSound()
+        // 1) Caminho oficial: notificação com fullScreenIntent.
         showAlertNotification(id, childName)
+        // 2) Som do alarme.
+        playAlarmSound()
+        // 3) Fallback: abertura direta da tela de emergência.
         launchEmergencyScreenDirect(id, childName)
         // CORREÇÃO (bug "não aparece com tela bloqueada"): tenta de novo
         // após 1,5 s. Na primeira tentativa a tela pode ainda estar
@@ -333,22 +369,31 @@ class SosWatchService : Service() {
 
     /**
      * Fallback: abre a tela de emergência diretamente, sem depender do
-     * fullScreenIntent da notificação. Em Android 10+ o sistema pode
-     * bloquear a abertura vinda de 2º plano ("Background activity start
-     * blocked") — por isso o try/catch: é melhor esforço, sem crash.
-     * Na prática funciona em muitos aparelhos/OEMs e cobre o caso em que
-     * o usuário não liberou a permissão de tela cheia no Android 14+.
+     * fullScreenIntent da notificação.
+     *
+     * v14 — CORREÇÃO do "some sozinha": REMOVIDO o
+     * FLAG_ACTIVITY_CLEAR_TASK. Ele destruía a tarefa do app (incluindo
+     * a MainActivity), e o `onDestroy()` da MainActivity parava o alarme
+     * do serviço + transmitia CLOSE_EMERGENCY — ou seja, a tela de
+     * emergência recém-aberta era fechada pelo próprio app. Agora a
+     * tela de emergência abre numa tarefa nova SEM matar a tarefa
+     * atual (NEW_TASK + SINGLE_TOP, igual ao intent da notificação).
+     *
+     * Em Android 10+ o sistema pode bloquear a abertura vinda de 2º
+     * plano ("Background activity start blocked") — por isso o
+     * try/catch: é melhor esforço, sem crash.
      */
     private fun launchEmergencyScreenDirect(id: String, childName: String) {
         try {
             val intent =
                 Intent(this, EmergencyAlertActivity::class.java).apply {
-                    // NEW_TASK + CLEAR_TASK: a tela de emergência vira a
-                    // raiz de uma tarefa nova e vem para a frente, por cima
-                    // de qualquer coisa (inclusive da tela bloqueada, junto
-                    // com showWhenLocked/turnScreenOn da activity).
+                    // NEW_TASK: a tela de emergência vem para a frente por
+                    // cima de qualquer coisa (inclusive da tela bloqueada,
+                    // junto com showWhenLocked/turnScreenOn da activity).
+                    // SEM CLEAR_TASK: não destrói a MainActivity (evita a
+                    // cascata onDestroy -> stopAlarm -> CLOSE_EMERGENCY que
+                    // fechava a própria tela de emergência).
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_CLEAR_TASK or
                         Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra(EmergencyAlertActivity.EXTRA_ALERT_ID, id)
                     putExtra(EmergencyAlertActivity.EXTRA_CHILD_NAME, childName)
