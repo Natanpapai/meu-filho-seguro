@@ -16,6 +16,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Reiniciar o rastreamento sozinho após o celular ligar -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- v15: pedir liberação da otimização de bateria (o sistema pode
+         matar os serviços de rastreamento/vigilância em 2º plano) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- v15: camada extra para o alerta de emergência abrir por cima da
+         tela bloqueada ("aparecer por cima de outros apps") -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:label="Meu Filho Seguro"

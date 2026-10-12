@@ -221,6 +221,11 @@ class SosAlertInfo {
   final bool ack;
   final bool silent;
 
+  /// v15 — alerta de TESTE (gravado pelo botão "Testar nos DOIS
+  /// aparelhos"): a UI mostra o selo "TESTE" para ninguém confundir
+  /// com uma emergência real.
+  final bool test;
+
   SosAlertInfo({
     required this.id,
     required this.childId,
@@ -230,5 +235,6 @@ class SosAlertInfo {
     this.timestamp,
     this.ack = false,
     this.silent = false,
+    this.test = false,
   });
 }

@@ -7,6 +7,7 @@ import '../services/firebase_service.dart';
 import '../services/history_service.dart';
 import '../services/sharing_service.dart';
 import '../services/sync_service.dart';
+import '../services/system_permissions.dart';
 import '../theme.dart';
 import 'profile_screen.dart';
 import 'welcome_screen.dart';
@@ -42,26 +43,34 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
   /// IDs de todos os responsáveis vinculados (multi-responsável).
   List<String> _guardianIdsCache = [];
 
-  /// Amostrador do histórico do dia (a cada 2 minutos).
-  Timer? _historyTimer;
+  /// Atualização da lista de responsáveis (a cada 2 minutos, só com
+  /// compartilhamento ativo). A amostragem do histórico do dia NÃO
+  /// roda mais aqui: agora ela é feita dentro do serviço nativo
+  /// (LocationSharingService, v15), que funciona mesmo com o app
+  /// do filho fechado — era o "Timer do Flutter" a causa dos
+  /// buracos nos passinhos.
+  Timer? _guardianIdsTimer;
+
+  /// null = ainda verificando; true = liberado; false = precisa liberar.
+  bool? _batteryOptIgnored;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _checkBatteryOptimization();
     // Inicia o rastreamento contínuo (foreground service, a cada 4s)
     // assim que a tela do filho abre. Não há opção de pausar: é uma
     // medida de segurança definida pelo responsável.
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) _startSharing();
     });
-    // Amostragem do histórico do dia + atualização da lista de
-    // responsáveis (a cada 2 minutos, só com compartilhamento ativo).
-    _historyTimer =
+    // Atualização da lista de responsáveis (a cada 2 minutos, só com
+    // compartilhamento ativo).
+    _guardianIdsTimer =
         Timer.periodic(const Duration(minutes: 2), (_) async {
       if (!mounted || !_sharing) return;
       await _refreshGuardianIds();
-      await _recordHistoryPoint();
     });
     // Limpeza de pontos antigos 1x ao dia.
     Future.delayed(const Duration(seconds: 10), () {
@@ -71,22 +80,18 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
 
   @override
   void dispose() {
-    _historyTimer?.cancel();
+    _guardianIdsTimer?.cancel();
     super.dispose();
   }
 
-  /// Grava um ponto do trajeto do dia no Firestore.
-  Future<void> _recordHistoryPoint() async {
-    final child = _child;
-    if (child == null || !FirebaseService.available) return;
-    final loc = await HistoryService.readOwnLocation(child.id);
-    if (loc == null) return;
-    await HistoryService.recordPoint(
-      childId: child.id,
-      lat: loc.lat,
-      lng: loc.lng,
-      battery: loc.battery,
-    );
+  /// Verifica se o app está liberado da otimização de bateria do
+  /// Android. Sem isso, o sistema (principalmente em Xiaomi/Samsung)
+  /// mata o serviço de rastreamento quando a tela apaga — essa é a
+  /// principal causa dos "buracos" nos passinhos.
+  Future<void> _checkBatteryOptimization() async {
+    final ok = await SystemPermissions.isIgnoringBatteryOptimizations();
+    if (!mounted) return;
+    setState(() => _batteryOptIgnored = ok);
   }
 
   Future<void> _cleanupHistory() async {
@@ -393,6 +398,68 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // v15 (PROBLEMA 1): se o app não estiver liberado da
+                  // otimização de bateria, o Android mata o rastreamento
+                  // quando a tela apaga e os passinhos ficam com buracos.
+                  // Cartão em linguagem simples, com botão que abre a
+                  // configuração do sistema (API SystemPermissions).
+                  if (_batteryOptIgnored == false) ...[
+                    Card(
+                      color: Colors.amber.shade50,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                    Icons.battery_saver_outlined,
+                                    color: Colors.amber.shade900),
+                                const SizedBox(width: 8),
+                                const Expanded(
+                                  child: Text(
+                                    'Não deixe o rastreamento parar',
+                                    style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight:
+                                            FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'O celular pode desligar o rastreamento '
+                              'para economizar bateria quando a tela '
+                              'apaga. Para os passinhos ficarem sem '
+                              'buracos, libere o app da otimização '
+                              'de bateria:',
+                              style: TextStyle(fontSize: 13),
+                            ),
+                            const SizedBox(height: 12),
+                            ElevatedButton.icon(
+                              onPressed: () async {
+                                await SystemPermissions
+                                    .openBatteryOptimizationSettings();
+                                // Recheca quando voltar da tela do
+                                // sistema (o cartão some se liberou).
+                                await Future.delayed(
+                                    const Duration(seconds: 1));
+                                await _checkBatteryOptimization();
+                              },
+                              icon: const Icon(
+                                  Icons.settings_outlined),
+                              label: const Text(
+                                  'Liberar na configuração'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(20),

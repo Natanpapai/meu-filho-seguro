@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../app_deps.dart';
 import '../app_navigator.dart';
 import '../models/models.dart';
+import '../models/safety_models.dart';
 import '../services/firebase_service.dart';
 import '../services/sos_alarm_service.dart';
 import '../services/sync_service.dart';
@@ -39,6 +40,19 @@ class _SosMonitorState extends State<SosMonitor> {
   final Map<String, BuildContext> _dialogContexts = {};
 
   @override
+  void initState() {
+    super.initState();
+    // v15 — reforço: garante a vigilância nativa (SosWatchService) ligada
+    // se o responsável estiver logado. O serviço precisa estar vivo para
+    // o alerta chegar com o app fechado ou a tela bloqueada. O
+    // startWatch nativo é idempotente (não duplica listeners).
+    final gid = widget.deps.storage.getGuardian()?.id;
+    if (gid != null && gid.isNotEmpty) {
+      SosAlarmService.startWatch(gid);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     if (!FirebaseService.available) return widget.child;
     // Reconstrói (e assina o stream) quando a sessão muda — cobre o
@@ -51,10 +65,10 @@ class _SosMonitorState extends State<SosMonitor> {
           _dismissAllDialogs();
           return widget.child;
         }
-        return StreamBuilder<List<SosAlert>>(
-          stream: RemoteSync.sosAlertsStream(gid),
+        return StreamBuilder<List<SosAlertInfo>>(
+          stream: RemoteSync.sosAlertsInfoStream(gid),
           builder: (context, snap) {
-            final alerts = (snap.data ?? const <SosAlert>[])
+            final alerts = (snap.data ?? const <SosAlertInfo>[])
                 .where((a) => !a.ack)
                 .where((a) =>
                     a.timestamp == null ||
@@ -70,7 +84,16 @@ class _SosMonitorState extends State<SosMonitor> {
 
             for (final a in alerts) {
               // Dispara o som (idempotente por alerta).
-              SosAlarmService.triggerAlarm(a);
+              SosAlarmService.triggerAlarm(SosAlert(
+                id: a.id,
+                childId: a.childId,
+                childName: a.childName,
+                guardianId: gid,
+                lat: a.lat,
+                lng: a.lng,
+                timestamp: a.timestamp,
+                ack: a.ack,
+              ));
               // Popup em qualquer tela (uma vez por alerta).
               if (_dialogShown.add(a.id)) {
                 WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -85,7 +108,7 @@ class _SosMonitorState extends State<SosMonitor> {
     );
   }
 
-  void _showSosDialog(SosAlert alert) {
+  void _showSosDialog(SosAlertInfo alert) {
     // Pela chave global: funciona de qualquer tela, pois o contexto do
     // builder do MaterialApp não tem um Navigator acima dele.
     final nav = appNavigatorKey.currentState;
@@ -97,17 +120,26 @@ class _SosMonitorState extends State<SosMonitor> {
         _dialogContexts[alert.id] = dialogCtx;
         return AlertDialog(
           backgroundColor: const Color(0xFFB71C1C),
-          title: const Row(
+          title: Row(
             children: [
-              Icon(Icons.warning_amber_rounded,
+              const Icon(Icons.warning_amber_rounded,
                   color: Colors.white, size: 30),
-              SizedBox(width: 10),
-              Text('SOS ACIONADO!',
-                  style: TextStyle(color: Colors.white)),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text('SOS ACIONADO!',
+                    style: TextStyle(color: Colors.white)),
+              ),
+              // v15: selo de teste — o alerta veio do botão "Testar nos
+              // DOIS aparelhos", não é emergência real.
+              if (alert.test) _testChip(),
             ],
           ),
           content: Text(
-            '${alert.childName} precisa de ajuda agora!',
+            alert.test
+                ? 'Alerta de TESTE para ${alert.childName}. '
+                    'Está tudo bem — é só para validar que o alerta '
+                    'chega nos dois aparelhos.'
+                : '${alert.childName} precisa de ajuda agora!',
             style: const TextStyle(color: Colors.white, fontSize: 16),
           ),
           actions: [
@@ -127,6 +159,26 @@ class _SosMonitorState extends State<SosMonitor> {
           ],
         );
       },
+    );
+  }
+
+  /// Selo "TESTE" para alertas vindos do botão de teste.
+  Widget _testChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white, width: 1.5),
+      ),
+      child: const Text(
+        'TESTE',
+        style: TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1),
+      ),
     );
   }
 

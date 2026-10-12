@@ -84,6 +84,45 @@ class RemoteSync {
     }
   }
 
+  /// v15 — Envia um alerta SOS de TESTE de verdade para o Firestore.
+  ///
+  /// Usado pelo botão "Testar nos DOIS aparelhos": grava um documento
+  /// real na coleção `sos_alerts` com `test: true` e `guardianIds` com
+  /// os DOIS responsáveis vinculados. Cada aparelho roda seu próprio
+  /// `SosWatchService` ouvindo pelo seu guardianId (`whereArrayContains`
+  /// em `guardianIds`) — então os dois disparam o caminho completo do
+  /// alerta (tela de emergência com selo TESTE + som + notificação).
+  /// O "MARCAR COMO VISTO" faz o ack normal (`ack: true`).
+  ///
+  /// Retorna true se gravou com sucesso.
+  static Future<bool> sendTestSosAlert({
+    required String childId,
+    required String childName,
+    required List<String> guardianIds,
+  }) async {
+    if (!_fb) return false;
+    if (guardianIds.isEmpty) return false;
+    try {
+      await _db.collection('sos_alerts').add({
+        'childId': childId,
+        'childName': childName,
+        'guardianId': guardianIds.first,
+        'guardianIds': guardianIds,
+        'lat': null,
+        'lng': null,
+        'timestamp': FieldValue.serverTimestamp(),
+        'ack': false,
+        'silent': false,
+        'test': true,
+      });
+      debugPrint('[Sync] SOS de TESTE enviado para os dois aparelhos.');
+      return true;
+    } catch (e) {
+      debugPrint('[Sync] falha ao enviar SOS de teste: $e');
+      return false;
+    }
+  }
+
   /// Stream dos alertas SOS endereçados a um responsável,
   /// mais recentes primeiro. A ordenação é feita no cliente para
   /// não exigir índice composto no Firestore.
@@ -140,6 +179,8 @@ class RemoteSync {
           timestamp: dt,
           ack: (m['ack'] as bool?) ?? false,
           silent: (m['silent'] as bool?) ?? false,
+          // v15: flag de TESTE (botão "Testar nos DOIS aparelhos").
+          test: (m['test'] as bool?) ?? false,
         );
       }).toList();
       list.sort((a, b) {

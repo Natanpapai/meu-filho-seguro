@@ -353,6 +353,31 @@ class _SosCard extends StatelessWidget {
                               ),
                             ),
                           ],
+                          // v15: selo de teste — alerta vindo do botão
+                          // "Testar nos DOIS aparelhos", não é emergência.
+                          if (alert.test) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.white
+                                    .withValues(alpha: 0.25),
+                                borderRadius:
+                                    BorderRadius.circular(10),
+                                border: Border.all(
+                                    color: Colors.white, width: 1.5),
+                              ),
+                              child: const Text(
+                                'TESTE',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                       Text(

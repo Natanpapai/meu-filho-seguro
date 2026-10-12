@@ -108,6 +108,33 @@ class _MapTabState extends State<MapTab> with TickerProviderStateMixin {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _preloadTrails();
+  }
+
+  /// v15 (PROBLEMA 1 — passinhos constantes): pré-carrega os passinhos
+  /// de hoje que estão persistidos neste aparelho (TrailService, v14)
+  /// para aparecerem IMEDIATAMENTE ao abrir o mapa, sem esperar
+  /// chegarem pontos novos. Antes, `_trails` existia só em memória:
+  /// ao reabrir o app os passinhos sumiam até chegarem pontos novos.
+  void _preloadTrails() {
+    final children = widget.deps.storage.getChildren();
+    for (final c in children) {
+      final points = TrailService.pointsOfDay(
+        widget.deps.storage,
+        c.id,
+        DateTime.now(),
+      );
+      if (points.isEmpty) continue;
+      final trail = _trails.putIfAbsent(c.id, () => []);
+      for (final p in points) {
+        trail.add(LatLng(p.lat, p.lng));
+      }
+    }
+  }
+
+  @override
   void dispose() {
     for (final c in _ctrls.values) {
       c.dispose();

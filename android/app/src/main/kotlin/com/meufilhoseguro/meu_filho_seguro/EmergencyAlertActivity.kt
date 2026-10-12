@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
@@ -37,11 +38,22 @@ class EmergencyAlertActivity : Activity() {
     companion object {
         const val EXTRA_ALERT_ID = "alert_id"
         const val EXTRA_CHILD_NAME = "child_name"
+
+        /**
+         * v15 — alerta de TESTE: quando true, a tela mostra o selo
+         * "TESTE" para ninguém confundir com uma emergência real.
+         * O "MARCAR COMO VISTO" funciona normalmente (faz o ack).
+         */
+        const val EXTRA_IS_TEST = "is_test"
+
         private const val ALERT_NOTIF_ID = 1003
     }
 
     private var vibrator: Vibrator? = null
     private var closeReceiver: android.content.BroadcastReceiver? = null
+
+    /** Selo "TESTE" (visível só em alertas de teste). */
+    private var testBadge: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -111,6 +123,28 @@ class EmergencyAlertActivity : Activity() {
             gravity = Gravity.CENTER
             setTypeface(typeface, Typeface.BOLD)
         }
+
+        // v15 — selo "TESTE": aparece só quando o alerta é de teste
+        // (EXTRA_IS_TEST). Evita que alguém confunda o teste com uma
+        // emergência de verdade.
+        val badge = TextView(this).apply {
+            text = "TESTE"
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(32, 12, 32, 12)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#7F0000"))
+                setStroke(4, Color.WHITE)
+                cornerRadius = 32f
+            }
+        }
+        val badgeParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = 24 }
+        testBadge = badge
         val subtitle = TextView(this).apply {
             text = "$childName precisa de ajuda AGORA!"
             setTextColor(Color.WHITE)
@@ -143,6 +177,13 @@ class EmergencyAlertActivity : Activity() {
 
         root.addView(emoji)
         root.addView(title)
+        // Selo de teste: visível só em alertas de teste.
+        root.addView(badge, badgeParams)
+        badge.visibility =
+            if (intent.getBooleanExtra(EXTRA_IS_TEST, false))
+                android.view.View.VISIBLE
+            else
+                android.view.View.GONE
         root.addView(subtitle)
         root.addView(hint)
         root.addView(button, btnParams)
@@ -273,10 +314,17 @@ class EmergencyAlertActivity : Activity() {
      * Se um NOVO alerta chegar com esta tela já aberta (launchMode
      * singleTop + fallback de abertura direta), troca o intent para o
      * mais recente — o "MARCAR COMO VISTO" referencia o alerta certo.
+     *
+     * v15 — atualiza também o selo "TESTE" conforme o novo intent.
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        testBadge?.visibility =
+            if (intent.getBooleanExtra(EXTRA_IS_TEST, false))
+                android.view.View.VISIBLE
+            else
+                android.view.View.GONE
     }
 
     override fun onDestroy() {

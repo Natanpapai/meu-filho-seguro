@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.location.Location
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
@@ -18,6 +19,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.firebase.Timestamp
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 
@@ -30,6 +32,14 @@ import com.google.firebase.firestore.SetOptions
  * - Usa o SDK nativo do Firestore (já inicializado pelo plugin Flutter).
  * - START_STICKY: se o sistema matar o serviço, ele reinicia sozinho
  *   lendo a configuração salva em SharedPreferences.
+ *
+ * v15 (PROBLEMA 1 — passinhos constantes): a amostragem do histórico
+ * (`history/{childId}/points`, a cada 2 min) e a limpeza de pontos com
+ * mais de 7 dias rodam AQUI DENTRO do serviço nativo. Antes, a
+ * amostragem era um Timer do Flutter que só funcionava com o app do
+ * filho ABERTO — app fechado = amostragem parada = buracos no
+ * histórico. Dentro do foreground service ela continua funcionando
+ * mesmo com o app fechado.
  */
 class LocationSharingService : Service() {
 
@@ -40,6 +50,14 @@ class LocationSharingService : Service() {
         private const val CHANNEL_ID = "location_sharing_channel"
         private const val NOTIF_ID = 1001
         private const val INTERVAL_MS = 4_000L
+
+        // Amostragem do histórico: a cada 2 min (mesma cadência do
+        // antigo Timer do Flutter, agora dentro do serviço nativo).
+        private const val HISTORY_INTERVAL_MS = 120_000L
+        // Retenção do histórico no Firestore: 7 dias (igual ao
+        // HistoryService.cleanupOldPoints do Flutter).
+        private const val HISTORY_RETENTION_MS = 7L * 24 * 60 * 60 * 1000
+        private const val KEY_LAST_HISTORY_CLEANUP = "last_history_cleanup"
 
         private const val PREFS = "mfs_sharing"
         private const val KEY_CHILD_ID = "child_id"
@@ -53,9 +71,24 @@ class LocationSharingService : Service() {
     }
     private var running = false
 
+    // Última localização recebida: é ela que a amostragem do histórico
+    // grava a cada 2 min (sem pedir GPS extra — sem custo de bateria
+    // além do rastreamento que já roda).
+    private var lastLocation: Location? = null
+
+    private val historyHandler = Handler(Looper.getMainLooper())
+    private val historySampler = object : Runnable {
+        override fun run() {
+            sampleHistoryPoint()
+            maybeCleanupOldHistoryPoints()
+            historyHandler.postDelayed(this, HISTORY_INTERVAL_MS)
+        }
+    }
+
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             val loc = result.lastLocation ?: return
+            lastLocation = loc
             pushToFirestore(loc)
         }
     }
@@ -148,9 +181,90 @@ class LocationSharingService : Service() {
                 locationCallback,
                 Looper.getMainLooper()
             )
+            // Inicia a amostragem do histórico (a cada 2 min), que agora
+            // roda junto do serviço — mesmo com o app fechado.
+            historyHandler.removeCallbacks(historySampler)
+            historyHandler.postDelayed(historySampler, HISTORY_INTERVAL_MS)
         } catch (e: SecurityException) {
             // Sem permissão de localização: não há o que fazer.
             stopSharing()
+        }
+    }
+
+    /**
+     * Amostragem do histórico do trajeto (v15 — PROBLEMA 1: passinhos
+     * constantes).
+     *
+     * A cada 2 minutos grava a última localização conhecida em
+     * `history/{childId}/points` (campos: lat, lng, battery,
+     * timestamp=serverTimestamp). Antes, essa amostragem rodava num
+     * Timer do Flutter que só funcionava com o app do filho ABERTO —
+     * com o app fechado a amostragem parava e o histórico ficava com
+     * buracos. Dentro do foreground service nativo ela continua
+     * funcionando mesmo com o app fechado.
+     */
+    private fun sampleHistoryPoint() {
+        val loc = lastLocation ?: return
+        try {
+            val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val childId = prefs.getString(KEY_CHILD_ID, null) ?: return
+
+            val battery = (getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
+                .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+
+            val data: HashMap<String, Any> = hashMapOf(
+                "lat" to loc.latitude,
+                "lng" to loc.longitude,
+                "battery" to battery.toLong(),
+                "timestamp" to FieldValue.serverTimestamp()
+            )
+
+            FirebaseFirestore.getInstance()
+                .collection("history")
+                .document(childId)
+                .collection("points")
+                .add(data)
+        } catch (e: Exception) {
+            // Amostragem nunca deve derrubar o serviço.
+        }
+    }
+
+    /**
+     * Limpeza de pontos do histórico com mais de 7 dias (1x ao dia).
+     * Antes era feita pelo app Flutter (HistoryService.cleanupOldPoints);
+     * agora roda aqui dentro do serviço, junto da amostragem.
+     */
+    private fun maybeCleanupOldHistoryPoints() {
+        try {
+            val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val childId = prefs.getString(KEY_CHILD_ID, null) ?: return
+
+            val today = java.text.SimpleDateFormat(
+                "yyyy-MM-dd", java.util.Locale.US
+            ).format(java.util.Date())
+            if (prefs.getString(KEY_LAST_HISTORY_CLEANUP, "") == today) return
+            prefs.edit().putString(KEY_LAST_HISTORY_CLEANUP, today).apply()
+
+            val cutoff = Timestamp(
+                java.util.Date(System.currentTimeMillis() - HISTORY_RETENTION_MS)
+            )
+            val db = FirebaseFirestore.getInstance()
+            db.collection("history")
+                .document(childId)
+                .collection("points")
+                .whereLessThan("timestamp", cutoff)
+                .limit(200)
+                .get()
+                .addOnSuccessListener { snap ->
+                    if (snap.isEmpty) return@addOnSuccessListener
+                    val batch = db.batch()
+                    for (doc in snap.documents) {
+                        batch.delete(doc.reference)
+                    }
+                    batch.commit()
+                }
+        } catch (e: Exception) {
+            // Limpeza nunca deve derrubar o serviço.
         }
     }
 
@@ -194,6 +308,7 @@ class LocationSharingService : Service() {
 
     private fun stopSharing() {
         running = false
+        historyHandler.removeCallbacks(historySampler)
         try {
             fused.removeLocationUpdates(locationCallback)
         } catch (e: Exception) {
@@ -210,6 +325,7 @@ class LocationSharingService : Service() {
 
     override fun onDestroy() {
         running = false
+        historyHandler.removeCallbacks(historySampler)
         try {
             fused.removeLocationUpdates(locationCallback)
         } catch (e: Exception) {

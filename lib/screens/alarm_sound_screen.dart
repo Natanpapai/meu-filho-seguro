@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../app_deps.dart';
 import '../services/sos_alarm_service.dart';
+import '../services/sync_service.dart';
 import '../theme.dart';
 
 /// Tela de configuração do som do alarme SOS.
@@ -16,7 +18,11 @@ import '../theme.dart';
 /// - Se nenhum som for encontrado no aparelho, avisa em vez de mostrar
 ///   lista vazia.
 class AlarmSoundScreen extends StatefulWidget {
-  const AlarmSoundScreen({super.key});
+  /// v15 — necessário para o teste nos DOIS aparelhos (busca o primeiro
+  /// filho vinculado e os responsáveis). Pode ser nulo: nesse caso o
+  /// botão de teste duplo mostra um aviso.
+  final AppDeps? deps;
+  const AlarmSoundScreen({super.key, this.deps});
 
   @override
   State<AlarmSoundScreen> createState() => _AlarmSoundScreenState();
@@ -135,7 +141,9 @@ class _AlarmSoundScreenState extends State<AlarmSoundScreen> {
                 // do celular em seguida — a tela vermelha deve aparecer por
                 // cima do bloqueio, com o som tocando. Encerra com
                 // "MARCAR COMO VISTO".
-                _TestAlertCard(),
+                // v15 — agora com 2 botões: "neste aparelho" (local) e
+                // "nos DOIS aparelhos" (SOS de teste real no servidor).
+                _TestAlertCard(deps: widget.deps),
                 const SizedBox(height: 8),
                       Row(
                         children: [
@@ -310,20 +318,29 @@ class _AlarmSoundScreenState extends State<AlarmSoundScreen> {
   }
 }
 
-/// Card de teste do alerta de emergência (v14).
+/// Card de teste do alerta de emergência (v14 + v15).
 ///
-/// Dispara o caminho COMPLETO do SOS (tela vermelha + som + notificação)
-/// sem precisar de um SOS real. Instruções na tela: tocar e bloquear o
-/// celular para validar que a tela de emergência aparece por cima do
-/// bloqueio. Encerra com "MARCAR COMO VISTO".
+/// - "Testar neste aparelho" (v14): dispara o caminho COMPLETO do SOS
+///   (tela vermelha + som + notificação) só neste celular, sem precisar
+///   de um SOS real. Para validar de verdade: toque e BLOQUEIE a tela —
+///   a tela de emergência deve aparecer por cima do bloqueio.
+/// - "Testar nos DOIS aparelhos" (v15): grava um SOS de TESTE de verdade
+///   no servidor, endereçado aos DOIS responsáveis vinculados. Cada
+///   aparelho dispara o caminho completo (tela vermelha com selo TESTE +
+///   som + notificação). Encerra com "MARCAR COMO VISTO" (ack normal).
 class _TestAlertCard extends StatefulWidget {
+  final AppDeps? deps;
+  const _TestAlertCard({this.deps});
+
   @override
   State<_TestAlertCard> createState() => _TestAlertCardState();
 }
 
 class _TestAlertCardState extends State<_TestAlertCard> {
   bool _testing = false;
+  bool _testingBoth = false;
 
+  /// Teste local (só neste aparelho), caminho nativo completo.
   Future<void> _test() async {
     setState(() => _testing = true);
     final ok = await SosAlarmService.testEmergencyAlert();
@@ -339,6 +356,58 @@ class _TestAlertCardState extends State<_TestAlertCard> {
     }
     // Se iniciou, o alerta de teste aparece em segundos — o próprio
     // "MARCAR COMO VISTO" da tela de emergência encerra o teste.
+  }
+
+  /// Teste nos DOIS aparelhos: grava um SOS de TESTE real no Firestore
+  /// para o primeiro filho vinculado, com guardianIds = os dois
+  /// responsáveis. Cada aparelho dispara o caminho completo sozinho.
+  Future<void> _testBoth() async {
+    if (_testingBoth) return;
+    setState(() => _testingBoth = true);
+    try {
+      final deps = widget.deps;
+      if (deps == null) {
+        _snack('Teste indisponível: abra por Ajustes > Som do alarme SOS.');
+        return;
+      }
+      final children = deps.storage.getChildren();
+      if (children.isEmpty) {
+        _snack('Cadastre um filho primeiro para testar.');
+        return;
+      }
+      final child = children.first;
+      // Responsáveis vinculados a este filho (pai + mãe) + garante o
+      // responsável atual na lista (cobre transição de IDs).
+      final myId = deps.storage.getGuardian()?.id ?? '';
+      var gids = await RemoteSync.fetchGuardianIds(child.id);
+      if (myId.isNotEmpty && !gids.contains(myId)) {
+        gids = [...gids, myId];
+      }
+      if (gids.isEmpty) {
+        _snack('Nenhum responsável vinculado a este filho ainda.');
+        return;
+      }
+      final rawName =
+          child.nickname.isNotEmpty ? child.nickname : child.name;
+      final ok = await RemoteSync.sendTestSosAlert(
+        childId: child.id,
+        childName: rawName.isNotEmpty ? rawName : 'Seu filho',
+        guardianIds: gids,
+      );
+      if (!mounted) return;
+      _snack(ok
+          ? 'Alerta de TESTE enviado! Nos dois aparelhos: tela vermelha '
+              'com selo TESTE + som. Encerre com "MARCAR COMO VISTO".'
+          : 'Não foi possível enviar o teste. Verifique a internet.');
+    } finally {
+      if (mounted) setState(() => _testingBoth = false);
+    }
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
@@ -373,10 +442,11 @@ class _TestAlertCardState extends State<_TestAlertCard> {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Dispara um alerta de TESTE (tela vermelha + som). Para validar '
-            'de verdade: toque no botão e BLOQUEIE a tela do celular em '
-            'seguida — a tela de emergência deve aparecer por cima do '
-            'bloqueio. Encerre com "MARCAR COMO VISTO".',
+            'Dispara um alerta de TESTE (tela vermelha com selo TESTE + '
+            'som). Para validar de verdade: toque no botão e BLOQUEIE a '
+            'tela do celular em seguida — a tela de emergência deve '
+            'aparecer por cima do bloqueio. Encerre com '
+            '"MARCAR COMO VISTO".',
             style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
           ),
           const SizedBox(height: 10),
@@ -395,9 +465,37 @@ class _TestAlertCardState extends State<_TestAlertCard> {
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: Colors.white),
                     )
-                  : const Icon(Icons.play_arrow, size: 18),
-              label: Text(_testing ? 'Iniciando...' : 'Disparar teste agora'),
+                  : const Icon(Icons.smartphone, size: 18),
+              label: Text(
+                  _testing ? 'Iniciando...' : 'Testar neste aparelho'),
             ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFC62828),
+                side: const BorderSide(color: Color(0xFFC62828)),
+              ),
+              onPressed: _testingBoth ? null : _testBoth,
+              icon: _testingBoth
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.group, size: 18),
+              label: Text(_testingBoth
+                  ? 'Enviando...'
+                  : 'Testar nos DOIS aparelhos'),
+            ),
+          ),
+          const Text(
+            'O teste duplo grava um SOS de TESTE no servidor para os 2 '
+            'responsáveis — cada celular dispara sozinho o caminho '
+            'completo.',
+            style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
           ),
         ],
       ),

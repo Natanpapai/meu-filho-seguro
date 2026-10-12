@@ -4,8 +4,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
@@ -14,6 +19,14 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FirebaseFirestore
@@ -46,6 +59,16 @@ class SosWatchService : Service() {
         const val ACTION_TEST_ALERT = "com.meufilhoseguro.app.WATCH_TEST_ALERT"
         const val EXTRA_TEST_CHILD_NAME = "test_child_name"
 
+        /**
+         * Overlay de emergência (v15): fallback além da notificação
+         * full-screen. Se o app tem permissão para "aparecer por cima de
+         * outros apps", mostra também um painel simples em tela cheia
+         * (fundo vermelho, nome do filho, botão VER ALERTA) via
+         * WindowManager TYPE_APPLICATION_OVERLAY. Alguns aparelhos
+         * ignoram o fullScreenIntent — o overlay cobre esse caso.
+         * Dispensado pelo broadcast ACTION_CLOSE_EMERGENCY (qualquer ack)
+         * ou ao tocar em VER ALERTA.
+         */
         /**
          * Broadcast enviado quando o alerta é encerrado (MARCAR COMO
          * VISTO em qualquer lugar): a tela de emergência nativa e o
@@ -80,6 +103,39 @@ class SosWatchService : Service() {
     private var mediaPlayer: MediaPlayer? = null
     private val alarmedIds = mutableSetOf<String>()
     private var running = false
+
+    /**
+     * Overlay de emergência (v15): painel simples em tela cheia via
+     * WindowManager, mostrado quando o app pode desenhar por cima de
+     * outros apps. É um complemento — o caminho principal continua
+     * sendo a notificação com fullScreenIntent.
+     */
+    private var overlayView: View? = null
+    private val overlayShownIds = mutableSetOf<String>()
+    private var closeReceiver: BroadcastReceiver? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        // Qualquer ack (MARCAR COMO VISTO em qualquer lugar) dispensa o
+        // overlay — nada fica por cima da tela depois de atendido.
+        closeReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                dismissOverlay()
+            }
+        }
+        try {
+            val filter = IntentFilter(ACTION_CLOSE_EMERGENCY)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(
+                    closeReceiver, filter, Context.RECEIVER_NOT_EXPORTED
+                )
+            } else {
+                registerReceiver(closeReceiver, filter)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     /**
      * Verificação periódica de filho offline (sem localização há +5 min).
@@ -134,7 +190,8 @@ class SosWatchService : Service() {
                     ?.takeIf { it.isNotBlank() } ?: "Seu filho"
                 // Garante que o serviço está em primeiro plano antes.
                 startWatch()
-                onSosAlert("test_${System.currentTimeMillis()}", name)
+                // Teste local: sempre marcado como teste (selo TESTE).
+                onSosAlert("test_${System.currentTimeMillis()}", name, true)
                 return START_STICKY
             }
             else -> startWatch()
@@ -211,7 +268,10 @@ class SosWatchService : Service() {
                             ) continue
                             onSosAlert(
                                 id,
-                                doc.getString("childName") ?: "Seu filho"
+                                doc.getString("childName") ?: "Seu filho",
+                                // v15: flag de TESTE — repassada para a tela
+                                // de emergência mostrar o selo "TESTE".
+                                doc.getBoolean("test") ?: false
                             )
                         }
                     }
@@ -325,7 +385,7 @@ class SosWatchService : Service() {
      * Defesa Civil SEMPRE — com o app aberto, fechado ou com a tela
      * bloqueada, sem nenhuma barreira.
      *
-     * Estratégia em 3 camadas (a primeira que funcionar vence):
+     * Estratégia em 4 camadas (a primeira que funcionar vence):
      * 1. Notificação com fullScreenIntent (caminho OFICIAL do Android —
      *    o único que funciona com a tela bloqueada no Android 10+).
      *    No Android 14+ exige a permissão "alertas em tela cheia"
@@ -335,25 +395,41 @@ class SosWatchService : Service() {
      *    ignorado). Em Android 10+ o sistema pode bloquear a abertura
      *    vinda de 2º plano — por isso o try/catch: melhor esforço.
      * 3. WakeLock breve para acender a tela.
+     * 4. v15 — OVERLAY em tela cheia (fallback extra): se o app pode
+     *    "aparecer por cima de outros apps", mostra um painel simples
+     *    com o nome do filho e botão VER ALERTA. Cobre aparelhos que
+     *    ignoram o fullScreenIntent. Dispensado pelo ack.
      *
      * v14 — ordem refeita: a notificação (camada oficial) é postada
      * ANTES da abertura direta, e o som toca depois dela. Antes, o
      * `MediaPlayer.prepare()` (síncrono, na thread principal) atrasava
      * a postagem da notificação.
      *
+     * [isTest]: alerta de teste — a tela de emergência mostra o selo
+     * "TESTE" para ninguém confundir com emergência real.
+     *
      * O som não duplica: o Flutter verifica `isAlarming` antes de tocar
      * o próprio alarme (ver `SosAlarmService.triggerAlarm`).
      */
-    private fun onSosAlert(id: String, childName: String) {
+    private fun onSosAlert(id: String, childName: String, isTest: Boolean = false) {
         // Acorda a tela PRIMEIRO: a fullScreenIntent e a abertura direta
         // funcionam melhor com a tela já acesa (principalmente bloqueada).
         wakeScreen()
         // 1) Caminho oficial: notificação com fullScreenIntent.
-        showAlertNotification(id, childName)
+        showAlertNotification(id, childName, isTest)
         // 2) Som do alarme.
         playAlarmSound()
         // 3) Fallback: abertura direta da tela de emergência.
-        launchEmergencyScreenDirect(id, childName)
+        launchEmergencyScreenDirect(id, childName, isTest)
+        // 4) v15 — overlay: complemento para aparelhos que ignoram o
+        // fullScreenIntent. Só se a permissão de overlay estiver liberada.
+        try {
+            if (Settings.canDrawOverlays(this) && overlayShownIds.add(id)) {
+                showEmergencyOverlay(id, childName, isTest)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         // CORREÇÃO (bug "não aparece com tela bloqueada"): tenta de novo
         // após 1,5 s. Na primeira tentativa a tela pode ainda estar
         // apagando/acordando e o sistema bloqueia a abertura ("Background
@@ -362,9 +438,137 @@ class SosWatchService : Service() {
         // Se a primeira já abriu, o singleTop só atualiza o intent.
         Handler(Looper.getMainLooper()).postDelayed({
             try {
-                launchEmergencyScreenDirect(id, childName)
+                launchEmergencyScreenDirect(id, childName, isTest)
             } catch (e: Exception) { }
         }, 1500)
+    }
+
+    /**
+     * v15 — Overlay de emergência em tela cheia (fallback extra além do
+     * fullScreenIntent).
+     *
+     * Mostra um painel simples (fundo vermelho, "🆘 SOS ACIONADO!",
+     * nome do filho, selo "TESTE" quando for teste e botão "VER ALERTA")
+     * por cima de qualquer coisa via WindowManager
+     * TYPE_APPLICATION_OVERLAY — exige a permissão "aparecer por cima de
+     * outros apps" liberada (verificada antes de chamar).
+     *
+     * Dispensado pelo broadcast ACTION_CLOSE_EMERGENCY (qualquer
+     * "MARCAR COMO VISTO") ou ao tocar em VER ALERTA. Não remove o
+     * caminho atual — é complemento.
+     */
+    private fun showEmergencyOverlay(
+        id: String,
+        childName: String,
+        isTest: Boolean
+    ) {
+        try {
+            dismissOverlay()
+            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+            val root = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setBackgroundColor(Color.parseColor("#B71C1C"))
+                setPadding(64, 64, 64, 64)
+            }
+
+            val emoji = TextView(this).apply {
+                text = "🆘"
+                textSize = 72f
+                gravity = Gravity.CENTER
+            }
+            val title = TextView(this).apply {
+                text = "SOS ACIONADO!"
+                setTextColor(Color.WHITE)
+                textSize = 34f
+                gravity = Gravity.CENTER
+                setTypeface(typeface, Typeface.BOLD)
+            }
+            root.addView(emoji)
+            root.addView(title)
+
+            if (isTest) {
+                val badge = TextView(this).apply {
+                    text = "TESTE"
+                    setTextColor(Color.WHITE)
+                    textSize = 16f
+                    gravity = Gravity.CENTER
+                    setTypeface(typeface, Typeface.BOLD)
+                    setPadding(28, 10, 28, 10)
+                    background =
+                        android.graphics.drawable.GradientDrawable().apply {
+                            setColor(Color.parseColor("#7F0000"))
+                            setStroke(3, Color.WHITE)
+                            cornerRadius = 28f
+                        }
+                }
+                val badgeParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = 20 }
+                root.addView(badge, badgeParams)
+            }
+
+            val subtitle = TextView(this).apply {
+                text = "$childName precisa de ajuda AGORA!"
+                setTextColor(Color.WHITE)
+                textSize = 20f
+                gravity = Gravity.CENTER
+                setPadding(0, 24, 0, 0)
+            }
+            root.addView(subtitle)
+
+            val button = Button(this).apply {
+                text = "VER ALERTA"
+                textSize = 20f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(Color.parseColor("#B71C1C"))
+                setBackgroundColor(Color.WHITE)
+                setPadding(32, 32, 32, 32)
+                setOnClickListener {
+                    // Abre a tela de emergência completa e dispensa o
+                    // overlay (ele ficaria por cima da própria tela).
+                    dismissOverlay()
+                    launchEmergencyScreenDirect(id, childName, isTest)
+                }
+            }
+            val btnParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 56 }
+            root.addView(button, btnParams)
+
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                else
+                    @Suppress("DEPRECATION")
+                    WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                PixelFormat.TRANSLUCENT
+            )
+            wm.addView(root, params)
+            overlayView = root
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /** Remove o overlay de emergência, se estiver visível. */
+    private fun dismissOverlay() {
+        val view = overlayView ?: return
+        overlayView = null
+        try {
+            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            wm.removeView(view)
+        } catch (e: Exception) {
+            // Já removido.
+        }
     }
 
     /**
@@ -382,8 +586,14 @@ class SosWatchService : Service() {
      * Em Android 10+ o sistema pode bloquear a abertura vinda de 2º
      * plano ("Background activity start blocked") — por isso o
      * try/catch: é melhor esforço, sem crash.
+     *
+     * v15 — repassa EXTRA_IS_TEST para a tela mostrar o selo "TESTE".
      */
-    private fun launchEmergencyScreenDirect(id: String, childName: String) {
+    private fun launchEmergencyScreenDirect(
+        id: String,
+        childName: String,
+        isTest: Boolean = false
+    ) {
         try {
             val intent =
                 Intent(this, EmergencyAlertActivity::class.java).apply {
@@ -397,6 +607,7 @@ class SosWatchService : Service() {
                         Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra(EmergencyAlertActivity.EXTRA_ALERT_ID, id)
                     putExtra(EmergencyAlertActivity.EXTRA_CHILD_NAME, childName)
+                    putExtra(EmergencyAlertActivity.EXTRA_IS_TEST, isTest)
                 }
             startActivity(intent)
         } catch (e: Exception) {
@@ -493,13 +704,19 @@ class SosWatchService : Service() {
      * - Ongoing: não pode ser arrastada para fora; só "MARCAR COMO VISTO"
      *   na tela de emergência dispensa o alerta.
      */
-    private fun showAlertNotification(id: String, childName: String) {
+    private fun showAlertNotification(
+        id: String,
+        childName: String,
+        isTest: Boolean = false
+    ) {
         val emergencyIntent =
             Intent(this, EmergencyAlertActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_SINGLE_TOP
                 putExtra(EmergencyAlertActivity.EXTRA_ALERT_ID, id)
                 putExtra(EmergencyAlertActivity.EXTRA_CHILD_NAME, childName)
+                // v15: a tela de emergência mostra o selo "TESTE".
+                putExtra(EmergencyAlertActivity.EXTRA_IS_TEST, isTest)
             }
         val pending = PendingIntent.getActivity(
             this, id.hashCode(), emergencyIntent,
@@ -511,7 +728,7 @@ class SosWatchService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
-            .setContentTitle("🆘 SOS ACIONADO!")
+            .setContentTitle(if (isTest) "🆘 SOS ACIONADO! (TESTE)" else "🆘 SOS ACIONADO!")
             .setContentText("$childName precisa de ajuda agora!")
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -571,6 +788,9 @@ class SosWatchService : Service() {
         }
         listeners.clear()
         stopAlarmSound()
+        // Nada de emergência fica por cima da tela após parar a
+        // vigilância (ex.: logout).
+        dismissOverlay()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -588,6 +808,11 @@ class SosWatchService : Service() {
         }
         listeners.clear()
         stopAlarmSound()
+        dismissOverlay()
+        try {
+            closeReceiver?.let { unregisterReceiver(it) }
+        } catch (e: Exception) { }
+        closeReceiver = null
         super.onDestroy()
     }
 }

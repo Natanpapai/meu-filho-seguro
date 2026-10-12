@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import '../app_deps.dart';
 import '../models/models.dart';
+import '../services/sos_alarm_service.dart';
+import '../services/system_permissions.dart';
 import '../theme.dart';
 import 'alarm_sound_screen.dart';
+import 'alert_permissions_screen.dart';
 import 'places_screen.dart';
 import 'profile_screen.dart';
 import 'welcome_screen.dart';
@@ -78,13 +81,18 @@ class SettingsTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
+        // v15 — Central de permissões do alerta: as 3 liberações que fazem
+        // o SOS aparecer em tela cheia com o celular bloqueado (bateria,
+        // tela cheia e overlay). Mostra quantas estão liberadas.
+        _AlertPermissionsTile(deps: deps),
+        const SizedBox(height: 12),
         _MenuTile(
           icon: Icons.alarm,
           title: 'Som do alarme SOS',
           subtitle: 'Escolha o som que toca na emergência',
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute(
-                builder: (_) => const AlarmSoundScreen()),
+                builder: (_) => AlarmSoundScreen(deps: deps)),
           ),
         ),
         const SizedBox(height: 12),
@@ -143,8 +151,7 @@ class SettingsTab extends StatelessWidget {
   }
 }
 
-class _MenuTile extends StatelessWidget {
-  final IconData icon;
+class _MenuTile extends StatelessWidget {  final IconData icon;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
@@ -179,6 +186,61 @@ class _MenuTile extends StatelessWidget {
             size: 16, color: AppTheme.textMuted),
         onTap: onTap,
       ),
+    );
+  }
+}
+
+/// Atalho para a Central de permissões do alerta (v15), com resumo ao
+/// vivo de quantas das 3 liberações estão ativas neste aparelho.
+/// Ao voltar da Central, re-verifica os status.
+class _AlertPermissionsTile extends StatefulWidget {
+  final AppDeps deps;
+  const _AlertPermissionsTile({required this.deps});
+
+  @override
+  State<_AlertPermissionsTile> createState() => _AlertPermissionsTileState();
+}
+
+class _AlertPermissionsTileState extends State<_AlertPermissionsTile> {
+  int? _okCount;
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  Future<void> _check() async {
+    final results = await Future.wait([
+      SystemPermissions.isIgnoringBatteryOptimizations(),
+      SosAlarmService.canUseFullScreenIntent(),
+      SystemPermissions.canDrawOverlays(),
+    ]);
+    if (mounted) {
+      setState(() => _okCount = results.where((ok) => ok).length);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final count = _okCount;
+    final allOk = count == 3;
+    return _MenuTile(
+      icon: allOk ? Icons.verified_user_outlined : Icons.security_outlined,
+      title: 'Permissões do alerta SOS',
+      subtitle: count == null
+          ? 'Verificando liberações...'
+          : (allOk
+              ? 'Tudo liberado neste aparelho ✅'
+              : '$count de 3 liberações ativas — toque para corrigir'),
+      onTap: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+              builder: (_) => const AlertPermissionsScreen()),
+        );
+        // Re-verifica ao voltar da Central.
+        _check();
+      },
     );
   }
 }

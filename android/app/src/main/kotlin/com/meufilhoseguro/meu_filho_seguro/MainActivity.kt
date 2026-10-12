@@ -195,6 +195,56 @@ class MainActivity : FlutterActivity() {
                             result.success(false)
                         }
                     }
+                    // v15 — economia de bateria: se o sistema estiver
+                    // otimizando a bateria do app, ele pode matar os
+                    // serviços de rastreamento e de vigilância SOS em
+                    // 2º plano (a causa mais comum de "passinhos com
+                    // buracos" e de "o alerta não apareceu"). O app pede
+                    // ao usuário para liberar nas configurações.
+                    "isIgnoringBatteryOptimizations" -> {
+                        val pm = getSystemService(Context.POWER_SERVICE)
+                            as android.os.PowerManager
+                        result.success(
+                            pm.isIgnoringBatteryOptimizations(packageName)
+                        )
+                    }
+                    "openBatteryOptimizationSettings" -> {
+                        try {
+                            val intent = Intent(
+                                android.provider.Settings
+                                    .ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                android.net.Uri.parse("package:$packageName")
+                            )
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
+                    // v15 — "aparecer por cima de outros apps": camada
+                    // extra de segurança para o alerta de emergência
+                    // abrir por cima da tela bloqueada mesmo se o
+                    // full-screen intent falhar em algum aparelho.
+                    "canDrawOverlays" -> {
+                        result.success(
+                            android.provider.Settings.canDrawOverlays(this)
+                        )
+                    }
+                    "openOverlaySettings" -> {
+                        try {
+                            val intent = Intent(
+                                android.provider.Settings
+                                    .ACTION_MANAGE_OVERLAY_PERMISSION,
+                                android.net.Uri.parse("package:$packageName")
+                            )
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
