@@ -153,6 +153,34 @@ class AuthService {
           g = await _fetchGuardianProfile(uid, email.trim());
           if (g != null) await _storage.saveGuardian(g);
         }
+        // CORREÇÃO (v14 — "desloga sozinho"): antes o login retornava
+        // sucesso mesmo sem perfil local do responsável (ex.: doc
+        // 'guardians/{uid}' apagado/ausente). O app abria "meio logado"
+        // — sem vigilância SOS — e no próximo arranque caía na tela de
+        // boas-vindas, parecendo logout espontâneo. Agora:
+        // - se o Firebase autenticou mas não há perfil em lugar nenhum,
+        //   cria um perfil local mínimo a partir do próprio usuário do
+        //   Firebase (uid/e-mail/nome) — a sessão fica COMPLETA;
+        // - o sucesso só é retornado com perfil válido em mãos.
+        if (g == null && uid != null) {
+          final fbUser = cred.user;
+          g = Guardian.create(
+            name: (fbUser?.displayName?.trim().isNotEmpty ?? false)
+                ? fbUser!.displayName!.trim()
+                : email.trim(),
+            email: email.trim(),
+            phone: fbUser?.phoneNumber ?? '',
+            passwordHash: _hash('__firebase__$uid'),
+          );
+          await _storage.saveGuardian(g);
+          debugPrint(
+              '[Auth] perfil local reconstruído a partir do Firebase Auth.');
+        }
+        if (g == null || g.id.isEmpty) {
+          return (false,
+              'Login incompleto: não foi possível carregar seu perfil. '
+              'Tente de novo.');
+        }
         await _storage.setRole('guardian');
         // Liga a vigilância SOS em 2º plano.
         _startSosWatch();
