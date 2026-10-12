@@ -152,4 +152,18 @@ class SosAlarmService {
       await _channel.invokeMethod('openFullScreenIntentSettings');
     } catch (_) {}
   }
+
+  /// v14 — dispara um ALERTA DE TESTE pelo caminho completo do SOS
+  /// (tela de emergência + som + notificação), sem precisar de um SOS
+  /// real no Firestore. O dono usa para validar o comportamento com a
+  /// tela bloqueada. O "MARCAR COMO VISTO" encerra o teste normalmente.
+  static Future<bool> testEmergencyAlert({String childName = ''}) async {
+    try {
+      final ok = await _channel.invokeMethod<bool>(
+          'testEmergencyAlert', {'childName': childName});
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
 }
