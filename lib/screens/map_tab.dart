@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -7,6 +6,7 @@ import '../app_deps.dart';
 import '../models/models.dart';
 import '../services/firebase_service.dart';
 import '../services/sync_service.dart';
+import '../services/trail_service.dart';
 import '../theme.dart';
 import '../widgets/footprints.dart';
 
@@ -130,6 +130,16 @@ class _MapTabState extends State<MapTab> with TickerProviderStateMixin {
     if (trail.length > 5000) trail.removeAt(0);
     // O trajeto mudou: invalida o cache de passinhos deste filho.
     _footprintsCache.remove(childId);
+    // v14 — persiste o ponto no aparelho do responsável: os passinhos
+    // ficam marcados no histórico de forma permanente (não somem ao
+    // recarregar o app, trocar de dia ou ficar sem internet). O serviço
+    // ignora pontos sem movimento real (>= 20 m OU >= 60 s).
+    TrailService.recordPoint(
+      widget.deps.storage,
+      childId: childId,
+      lat: p.latitude,
+      lng: p.longitude,
+    );
   }
 
   /// Move suavemente o marcador do filho até o novo ponto.
