@@ -129,6 +129,14 @@ class _AlarmSoundScreenState extends State<AlarmSoundScreen> {
                             fontSize: 13, color: AppTheme.textMuted),
                       ),
                       const SizedBox(height: 8),
+                // v14 — teste de ponta a ponta: dispara o caminho COMPLETO
+                // do SOS (tela de emergência + som + notificação) sem um
+                // SOS real. Como testar: toque no botão e BLOQUEIE a tela
+                // do celular em seguida — a tela vermelha deve aparecer por
+                // cima do bloqueio, com o som tocando. Encerra com
+                // "MARCAR COMO VISTO".
+                _TestAlertCard(),
+                const SizedBox(height: 8),
                       Row(
                         children: [
                           Expanded(
@@ -298,6 +306,101 @@ class _AlarmSoundScreenState extends State<AlarmSoundScreen> {
                 ),
               ],
             ),
+    );
+  }
+}
+
+/// Card de teste do alerta de emergência (v14).
+///
+/// Dispara o caminho COMPLETO do SOS (tela vermelha + som + notificação)
+/// sem precisar de um SOS real. Instruções na tela: tocar e bloquear o
+/// celular para validar que a tela de emergência aparece por cima do
+/// bloqueio. Encerra com "MARCAR COMO VISTO".
+class _TestAlertCard extends StatefulWidget {
+  @override
+  State<_TestAlertCard> createState() => _TestAlertCardState();
+}
+
+class _TestAlertCardState extends State<_TestAlertCard> {
+  bool _testing = false;
+
+  Future<void> _test() async {
+    setState(() => _testing = true);
+    final ok = await SosAlarmService.testEmergencyAlert();
+    if (!mounted) return;
+    setState(() => _testing = false);
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Não foi possível iniciar o teste. Tente com o app aberto.'),
+        ),
+      );
+    }
+    // Se iniciou, o alerta de teste aparece em segundos — o próprio
+    // "MARCAR COMO VISTO" da tela de emergência encerra o teste.
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFCE4EC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFFE57373),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.science_outlined,
+                  color: Color(0xFFC62828), size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Testar alerta de emergência',
+                  style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Dispara um alerta de TESTE (tela vermelha + som). Para validar '
+            'de verdade: toque no botão e BLOQUEIE a tela do celular em '
+            'seguida — a tela de emergência deve aparecer por cima do '
+            'bloqueio. Encerre com "MARCAR COMO VISTO".',
+            style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFC62828),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: _testing ? null : _test,
+              icon: _testing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.play_arrow, size: 18),
+              label: Text(_testing ? 'Iniciando...' : 'Disparar teste agora'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
