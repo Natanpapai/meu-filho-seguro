@@ -69,6 +69,8 @@ class TrialService {
   static const String _kRequestNumber = 'mfs_trial_request_number';
   static const String _kLastSeen = 'mfs_trial_last_seen';
   static const String _kDeviceId = 'mfs_trial_device_id';
+  static const String _kLastStatus = 'mfs_trial_last_status';
+  static const String _kTrialStartLocal = 'mfs_trial_start_local';
 
   static final TrialService instance = TrialService._();
   TrialService._();
@@ -123,10 +125,16 @@ class TrialService {
       _deviceId = await _resolveDeviceId();
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getInt(_kRequestNumber);
-      if (saved != null && FirebaseService.available) {
+      if (saved != null) {
         requestNumber.value = saved;
-        _attachListener(saved);
-        status.value = TrialStatus.checking; // o listener define o resto
+        if (FirebaseService.available) {
+          _attachListener(saved);
+          status.value = TrialStatus.checking; // o listener define o resto
+        } else {
+          // Offline com pedido existente: restaura o último estado
+          // conhecido (não mostra a tela de solicitação de novo).
+          _restoreLastKnown(prefs);
+        }
       } else {
         status.value = TrialStatus.noRequest;
       }
@@ -135,6 +143,43 @@ class TrialService {
       debugPrint('[Trial] init falhou: $e');
       status.value = TrialStatus.noRequest;
     }
+  }
+
+  /// Restaura o último estado conhecido quando está offline.
+  void _restoreLastKnown(SharedPreferences prefs) {
+    final s = prefs.getString(_kLastStatus);
+    final startIso = prefs.getString(_kTrialStartLocal);
+    if (s == 'active' && startIso != null) {
+      final start = _parseUtc(startIso);
+      if (start != null) {
+        _trialStartUtc = start;
+        final left = daysRemainingFor(
+            trialStartUtc: start, nowUtc: DateTime.now().toUtc());
+        daysLeft.value = left;
+        status.value = statusFor(left);
+        return;
+      }
+    }
+    status.value = switch (s) {
+      'pending' => TrialStatus.pendingApproval,
+      'blocked' => TrialStatus.blocked,
+      'expired' => TrialStatus.expired,
+      'active' => TrialStatus.active,
+      _ => TrialStatus.pendingApproval,
+    };
+  }
+
+  /// Persiste o último estado conhecido (para aberturas offline).
+  Future<void> _persistLastKnown(
+      String st, DateTime? trialStart) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kLastStatus, st);
+      if (trialStart != null) {
+        await prefs.setString(
+            _kTrialStartLocal, trialStart.toIso8601String());
+      }
+    } catch (_) {}
   }
 
   /// Recalcula expiração com o "agora" (ex.: app ficou aberto virando o dia).
@@ -281,12 +326,15 @@ class TrialService {
     switch (st) {
       case 'pending':
         status.value = TrialStatus.pendingApproval;
+        _persistLastKnown('pending', null);
         break;
       case 'blocked':
         status.value = TrialStatus.blocked;
+        _persistLastKnown('blocked', null);
         break;
       case 'expired':
         status.value = TrialStatus.expired;
+        _persistLastKnown('expired', null);
         break;
       case 'active':
         final ts = data['trial_start'];
@@ -298,13 +346,18 @@ class TrialService {
           );
           daysLeft.value = left;
           status.value = statusFor(left);
+          _persistLastKnown(
+              status.value == TrialStatus.expired ? 'expired' : 'active',
+              _trialStartUtc);
           debugPrint('[Trial] ativo, restantes=$left');
         } else {
           status.value = TrialStatus.pendingApproval;
+          _persistLastKnown('pending', null);
         }
         break;
       default:
         status.value = TrialStatus.pendingApproval;
+        _persistLastKnown('pending', null);
     }
   }
 
