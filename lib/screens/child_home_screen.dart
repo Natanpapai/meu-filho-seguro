@@ -9,6 +9,7 @@ import '../services/sharing_service.dart';
 import '../services/sync_service.dart';
 import '../services/system_permissions.dart';
 import '../theme.dart';
+import '../widgets/trial_banner.dart';
 import 'profile_screen.dart';
 import 'welcome_screen.dart';
 
@@ -398,6 +399,8 @@ class _ChildHomeScreenState extends State<ChildHomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  // v17: faixa do trial (dias restantes / alerta).
+                  const TrialBanner(),
                   // v15 (PROBLEMA 1): se o app não estiver liberado da
                   // otimização de bateria, o Android mata o rastreamento
                   // quando a tela apaga e os passinhos ficam com buracos.
