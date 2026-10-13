@@ -5,11 +5,13 @@ import 'app_navigator.dart';
 import 'services/firebase_service.dart';
 import 'services/sos_alarm_service.dart';
 import 'services/storage_service.dart';
+import 'services/trial_service.dart';
 import 'screens/child_home_screen.dart';
 import 'screens/guardian_home_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'theme.dart';
 import 'widgets/sos_monitor.dart';
+import 'widgets/trial_gate.dart';
 
 /// Ponto de entrada do app.
 ///
@@ -45,6 +47,10 @@ void main() async {
     final storage = StorageService();
     await storage.init();
     final deps = AppDeps(storage);
+    // v17: inicializa o controle do trial de 7 dias (aprovação manual).
+    // Nunca trava o arranque: em caso de erro, o trial libera (fail-open)
+    // e a tela de solicitação aparece.
+    await TrialService.instance.init(storage);
 
     // Validação da sessão: papel sem perfil = sessão parcial/corrompida.
     // Limpa de forma deliberada (o usuário faz login de novo) em vez de
@@ -110,8 +116,13 @@ class MeuFilhoSeguroApp extends StatelessWidget {
       navigatorKey: appNavigatorKey,
       // Monitor global de SOS: popup + som em qualquer tela do app,
       // inclusive nas telas abertas após o login.
-      builder: (context, child) =>
-          SosMonitor(deps: deps, child: child ?? const SizedBox.shrink()),
+      // v17: TrialGate por fora — bloqueia o app conforme o estado do
+      // trial (solicitação / espera / bloqueio), acima de tudo.
+      builder: (context, child) => TrialGate(
+            deps: deps,
+            child: SosMonitor(
+                deps: deps, child: child ?? const SizedBox.shrink()),
+          ),
       home: home,
     );
   }
