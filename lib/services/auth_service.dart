@@ -8,6 +8,7 @@ import 'firebase_service.dart';
 import 'sos_alarm_service.dart';
 import 'storage_service.dart';
 import 'sync_service.dart';
+import 'trial_service.dart';
 
 /// Cadastro, login e vinculação do responsável.
 ///
@@ -95,6 +96,8 @@ class AuthService {
       }
     }
 
+    // v17: amarra a família/responsável ao pedido de teste.
+    TrialService.instance.updateRequestFamily(_storage);
     return (true, null);
   }
 
@@ -185,6 +188,8 @@ class AuthService {
         // Liga a vigilância SOS em 2º plano.
         _startSosWatch();
         ensureGuardianLinked();
+        // v17: amarra a família/responsável ao pedido de teste.
+        TrialService.instance.updateRequestFamily(_storage);
         return (true, null);
       } on fb_auth.FirebaseAuthException catch (e) {
         // Conta não existe no Firebase ou senha errada: tenta o modo local.
@@ -205,6 +210,8 @@ class AuthService {
     // Liga a vigilância SOS em 2º plano.
     _startSosWatch();
     ensureGuardianLinked();
+    // v17: amarra a família/responsável ao pedido de teste.
+    TrialService.instance.updateRequestFamily(_storage);
     return (true, null);
   }
 
@@ -365,6 +372,8 @@ class AuthService {
             }
             // Uso único: apaga o código para não ser reutilizado.
             await doc.reference.delete();
+            // v17: amarra a família ao pedido de teste (celular do filho).
+            TrialService.instance.updateRequestFamily(_storage);
             return (true, null);
           } else {
             // Código expirado no Firestore: apaga e informa.
@@ -391,6 +400,8 @@ class AuthService {
         await _storage.upsertChild(updated);
         await _storage.setRole('child');
         await _storage.setSessionChildId(c.id);
+        // v17: amarra a família ao pedido de teste (pareamento local).
+        TrialService.instance.updateRequestFamily(_storage);
         return (true, null);
       }
     }
@@ -453,6 +464,8 @@ class AuthService {
       ensureGuardianLinked();
       // 3) Uso único.
       await doc.reference.delete();
+      // v17: amarra a família ao pedido de teste (2º responsável).
+      TrialService.instance.updateRequestFamily(_storage);
       return (true, null);
     } catch (e) {
       debugPrint('[Auth] vincular 2º responsável falhou: $e');
