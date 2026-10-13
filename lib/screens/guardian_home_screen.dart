@@ -18,6 +18,7 @@ import 'pairing_screen.dart';
 import 'second_guardian_pairing_screen.dart';
 import 'safety_screen.dart';
 import '../widgets/connectivity_chip.dart';
+import '../widgets/trial_banner.dart';
 
 /// Tela principal do responsável: filhos, status, mapa, histórico e ajustes.
 class GuardianHomeScreen extends StatefulWidget {
@@ -86,12 +87,20 @@ class _GuardianHomeScreenState extends State<GuardianHomeScreen> {
             ),
         ],
       ),
-      body: switch (_tab) {
-        0 => _HomeTab(deps: widget.deps, onChanged: _refresh),
-        1 => MapTab(deps: widget.deps),
-        2 => HistoryTab(deps: widget.deps),
-        _ => SettingsTab(deps: widget.deps, guardian: guardian),
-      },
+      body: Column(
+        children: [
+          // v17: faixa do trial (dias restantes / alerta).
+          const TrialBanner(),
+          Expanded(
+            child: switch (_tab) {
+              0 => _HomeTab(deps: widget.deps, onChanged: _refresh),
+              1 => MapTab(deps: widget.deps),
+              2 => HistoryTab(deps: widget.deps),
+              _ => SettingsTab(deps: widget.deps, guardian: guardian),
+            },
+          ),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),
